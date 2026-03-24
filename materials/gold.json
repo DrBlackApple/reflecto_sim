@@ -1,0 +1,13 @@
+{
+    "name": "Gold_Drude",
+    "model": "Drude",
+    "params": {
+        "eps_inf": 9.5,
+        "omega_p_eV": 9.03,
+        "gamma_eV": 0.071
+    },
+    "wavelength_range_nm": [
+        300,
+        2000
+    ]
+}

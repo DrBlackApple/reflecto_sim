@@ -1,0 +1,16 @@
+{
+    "name": "Titanium",
+    "model": "DrudeLorentz",
+    "_reference": "Rakic et al., Appl. Opt. 37, 5271 (1998) — reformulated for Drude-Lorentz (f_j * omega_j^2 strength convention)",
+    "params": {
+        "eps_inf": 1.0,
+        "omega_p_eV": 2.804,
+        "gamma_D_eV": 0.082,
+        "oscillators": [
+            {"omega_j_eV": 0.777, "f_j": 79.15, "gamma_j_eV": 2.276},
+            {"omega_j_eV": 1.545, "f_j":  8.760, "gamma_j_eV": 2.518},
+            {"omega_j_eV": 2.509, "f_j":  1.579, "gamma_j_eV": 1.663}
+        ]
+    },
+    "wavelength_range_nm": [200, 2000]
+}

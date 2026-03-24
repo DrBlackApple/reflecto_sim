@@ -1,0 +1,17 @@
+{
+    "name": "Platinum",
+    "model": "DrudeLorentz",
+    "_reference": "Rakic et al., Appl. Opt. 37, 5271 (1998) — reformulated for Drude-Lorentz (f_j * omega_j^2 strength convention)",
+    "params": {
+        "eps_inf": 1.0,
+        "omega_p_eV": 5.534,
+        "gamma_D_eV": 0.080,
+        "oscillators": [
+            {"omega_j_eV": 0.780, "f_j": 28.87, "gamma_j_eV": 0.517},
+            {"omega_j_eV": 1.314, "f_j": 35.11, "gamma_j_eV": 1.838},
+            {"omega_j_eV": 3.141, "f_j":  5.099, "gamma_j_eV": 3.668},
+            {"omega_j_eV": 9.249, "f_j":  3.845, "gamma_j_eV": 8.517}
+        ]
+    },
+    "wavelength_range_nm": [200, 2000]
+}

@@ -1,0 +1,12 @@
+{
+    "name": "Graphene",
+    "model": "Graphene2D",
+    "params": {
+        "mu_c_eV": 0.0,
+        "tau_fs": 100.0,
+        "T_K": 300.0,
+        "d_nm": 0.335
+    },
+    "wavelength_range_nm": [200, 3000],
+    "_comment": "Utiliser epaisseur = 0.335 nm dans l'editeur de couches (1 monocouche). Pour du graphene dope, augmenter mu_c_eV (ex. 0.3-1.0 eV)."
+}

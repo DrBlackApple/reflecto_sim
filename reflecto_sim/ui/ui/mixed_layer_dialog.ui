@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>MixedLayerDialog</class>
+ <widget class="QDialog" name="MixedLayerDialog">
+  <property name="geometry">
+   <rect><x>0</x><y>0</y><width>340</width><height>280</height></rect>
+  </property>
+  <property name="windowTitle">
+   <string>Mixed layer</string>
+  </property>
+  <property name="sizeGripEnabled"><bool>false</bool></property>
+  <layout class="QVBoxLayout" name="vl_main">
+   <property name="leftMargin"><number>12</number></property>
+   <property name="topMargin"><number>12</number></property>
+   <property name="rightMargin"><number>12</number></property>
+   <property name="bottomMargin"><number>12</number></property>
+   <item>
+    <layout class="QFormLayout" name="fl_fields">
+     <property name="rowWrapPolicy"><enum>QFormLayout::DontWrapRows</enum></property>
+     <item row="0" column="0">
+      <widget class="QLabel" name="lbl_name">
+       <property name="text"><string>Name:</string></property>
+      </widget>
+     </item>
+     <item row="0" column="1">
+      <widget class="QLineEdit" name="edit_name"/>
+     </item>
+     <item row="1" column="0">
+      <widget class="QLabel" name="lbl_mat_a">
+       <property name="text"><string>Material A (f):</string></property>
+      </widget>
+     </item>
+     <item row="1" column="1">
+      <widget class="QComboBox" name="combo_mat_a">
+       <property name="editable"><bool>false</bool></property>
+      </widget>
+     </item>
+     <item row="2" column="0">
+      <widget class="QLabel" name="lbl_mat_b">
+       <property name="text"><string>Material B (1-f):</string></property>
+      </widget>
+     </item>
+     <item row="2" column="1">
+      <widget class="QComboBox" name="combo_mat_b">
+       <property name="editable"><bool>false</bool></property>
+      </widget>
+     </item>
+     <item row="3" column="0">
+      <widget class="QLabel" name="lbl_fraction">
+       <property name="text"><string>Volume fraction f:</string></property>
+      </widget>
+     </item>
+     <item row="3" column="1">
+      <layout class="QHBoxLayout" name="hl_fraction">
+       <item>
+        <widget class="QSlider" name="slider_fraction">
+         <property name="minimum"><number>0</number></property>
+         <property name="maximum"><number>100</number></property>
+         <property name="value"><number>50</number></property>
+         <property name="orientation"><enum>Qt::Horizontal</enum></property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="lbl_fraction_val">
+         <property name="text"><string>0.50</string></property>
+         <property name="minimumWidth"><number>36</number></property>
+         <property name="alignment"><set>Qt::AlignRight|Qt::AlignVCenter</set></property>
+        </widget>
+       </item>
+      </layout>
+     </item>
+     <item row="4" column="0">
+      <widget class="QLabel" name="lbl_thickness">
+       <property name="text"><string>Thickness (nm):</string></property>
+      </widget>
+     </item>
+     <item row="4" column="1">
+      <widget class="QLineEdit" name="edit_thickness">
+       <property name="text"><string>100</string></property>
+      </widget>
+     </item>
+     <item row="5" column="0">
+      <widget class="QLabel" name="lbl_model">
+       <property name="text"><string>Model:</string></property>
+      </widget>
+     </item>
+     <item row="5" column="1">
+      <widget class="QComboBox" name="combo_model">
+       <property name="editable"><bool>false</bool></property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <widget class="QDialogButtonBox" name="button_box">
+     <property name="orientation"><enum>Qt::Horizontal</enum></property>
+     <property name="standardButtons">
+      <set>QDialogButtonBox::Ok|QDialogButtonBox::Cancel</set>
+     </property>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <resources/>
+ <connections>
+  <connection>
+   <sender>button_box</sender>
+   <signal>accepted()</signal>
+   <receiver>MixedLayerDialog</receiver>
+   <slot>accept()</slot>
+  </connection>
+  <connection>
+   <sender>button_box</sender>
+   <signal>rejected()</signal>
+   <receiver>MixedLayerDialog</receiver>
+   <slot>reject()</slot>
+  </connection>
+ </connections>
+</ui>

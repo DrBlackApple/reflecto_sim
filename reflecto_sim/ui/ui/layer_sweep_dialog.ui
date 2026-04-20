@@ -1,0 +1,182 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>LayerSweepDialog</class>
+ <widget class="QDialog" name="LayerSweepDialog">
+  <property name="geometry">
+   <rect><x>0</x><y>0</y><width>340</width><height>320</height></rect>
+  </property>
+  <property name="windowTitle">
+   <string>Sweep config</string>
+  </property>
+  <layout class="QVBoxLayout" name="vl_main">
+   <property name="leftMargin"><number>12</number></property>
+   <property name="topMargin"><number>12</number></property>
+   <property name="rightMargin"><number>12</number></property>
+   <property name="bottomMargin"><number>12</number></property>
+   <item>
+    <layout class="QHBoxLayout" name="hl_mode">
+     <item>
+      <widget class="QLabel" name="lbl_mode">
+       <property name="text"><string>Mode:</string></property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QRadioButton" name="radio_none">
+       <property name="text"><string>None</string></property>
+       <property name="checked"><bool>true</bool></property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QRadioButton" name="radio_material">
+       <property name="text"><string>Material</string></property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QRadioButton" name="radio_mix">
+       <property name="text"><string>Mix fraction</string></property>
+      </widget>
+     </item>
+     <item>
+      <spacer>
+       <property name="orientation"><enum>Qt::Horizontal</enum></property>
+       <property name="sizeHint" stdset="0">
+        <size><width>40</width><height>20</height></size>
+       </property>
+      </spacer>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <widget class="QStackedWidget" name="content_stack">
+     <!-- Page 0: None -->
+     <widget class="QWidget" name="page_none">
+      <layout class="QVBoxLayout" name="vl_none">
+       <item>
+        <widget class="QLabel" name="lbl_none_info">
+         <property name="text"><string>No sweep — single spectrum.</string></property>
+         <property name="alignment"><set>Qt::AlignCenter</set></property>
+        </widget>
+       </item>
+      </layout>
+     </widget>
+     <!-- Page 1: Material sweep -->
+     <widget class="QWidget" name="page_material">
+      <layout class="QVBoxLayout" name="vl_material">
+       <item>
+        <widget class="QLabel" name="lbl_mat_hint">
+         <property name="text"><string>Materials to sweep:</string></property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QListWidget" name="list_materials">
+         <property name="selectionMode">
+          <enum>QAbstractItemView::ExtendedSelection</enum>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <layout class="QHBoxLayout" name="hl_mat_btns">
+         <item>
+          <widget class="QPushButton" name="btn_select_all">
+           <property name="text"><string>Select All</string></property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="btn_clear_sel">
+           <property name="text"><string>Clear</string></property>
+          </widget>
+         </item>
+         <item>
+          <spacer>
+           <property name="orientation"><enum>Qt::Horizontal</enum></property>
+           <property name="sizeHint" stdset="0">
+            <size><width>40</width><height>20</height></size>
+           </property>
+          </spacer>
+         </item>
+        </layout>
+       </item>
+      </layout>
+     </widget>
+     <!-- Page 2: Mix fraction sweep -->
+     <widget class="QWidget" name="page_mix">
+      <layout class="QVBoxLayout" name="vl_mix">
+       <item>
+        <layout class="QFormLayout" name="fl_mix">
+         <item row="0" column="0">
+          <widget class="QLabel" name="lbl_mix_mat_b">
+           <property name="text"><string>Material B (f=0):</string></property>
+          </widget>
+         </item>
+         <item row="0" column="1">
+          <widget class="QComboBox" name="combo_mix_mat_b">
+           <property name="editable"><bool>false</bool></property>
+          </widget>
+         </item>
+         <item row="1" column="0">
+          <widget class="QLabel" name="lbl_mix_model">
+           <property name="text"><string>Model:</string></property>
+          </widget>
+         </item>
+         <item row="1" column="1">
+          <widget class="QComboBox" name="combo_mix_model">
+           <property name="editable"><bool>false</bool></property>
+          </widget>
+         </item>
+         <item row="2" column="0">
+          <widget class="QLabel" name="lbl_n_pts">
+           <property name="text"><string>N points:</string></property>
+          </widget>
+         </item>
+         <item row="2" column="1">
+          <widget class="QSpinBox" name="spin_n_pts">
+           <property name="minimum"><number>2</number></property>
+           <property name="maximum"><number>200</number></property>
+           <property name="value"><number>20</number></property>
+          </widget>
+         </item>
+        </layout>
+       </item>
+       <item>
+        <widget class="QLabel" name="lbl_mix_hint">
+         <property name="text"><string>(Mat A = current, f=1)</string></property>
+        </widget>
+       </item>
+       <item>
+        <spacer>
+         <property name="orientation"><enum>Qt::Vertical</enum></property>
+         <property name="sizeHint" stdset="0">
+          <size><width>20</width><height>40</height></size>
+         </property>
+        </spacer>
+       </item>
+      </layout>
+     </widget>
+    </widget>
+   </item>
+   <item>
+    <widget class="QDialogButtonBox" name="button_box">
+     <property name="orientation"><enum>Qt::Horizontal</enum></property>
+     <property name="standardButtons">
+      <set>QDialogButtonBox::Ok|QDialogButtonBox::Cancel</set>
+     </property>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <resources/>
+ <connections>
+  <connection>
+   <sender>button_box</sender>
+   <signal>accepted()</signal>
+   <receiver>LayerSweepDialog</receiver>
+   <slot>accept()</slot>
+  </connection>
+  <connection>
+   <sender>button_box</sender>
+   <signal>rejected()</signal>
+   <receiver>LayerSweepDialog</receiver>
+   <slot>reject()</slot>
+  </connection>
+ </connections>
+</ui>

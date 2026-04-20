@@ -1,698 +1,482 @@
-"""Layer stack editor widget — list of layers with controls."""
+"""
+Stack editor widget and dialogs — PySide6 rewrite.
+
+StackEditor   — main widget (superstrate / layers / substrate)
+LayerRowWidget — single layer row (inline, no .ui file — created dynamically)
+MixedLayerDialog  — QDialog to configure a mixed-material layer
+LayerSweepDialog  — QDialog to configure sweep mode for a layer
+"""
 
 from __future__ import annotations
 
-import tkinter as tk
-from tkinter import ttk, messagebox
-from typing import Callable
+from typing import Optional
+
+from PySide6.QtCore import Qt, Signal, Slot
+from PySide6.QtGui import QDoubleValidator
+from PySide6.QtWidgets import (
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QMessageBox,
+    QPushButton,
+    QRadioButton,
+    QSlider,
+    QSpinBox,
+    QVBoxLayout,
+    QWidget,
+)
 
 from ..stack import LayerSpec, StackConfig
-from .plot_panel import PALETTE, BG_DARK, AX_BG, LABEL_COL, SPINE_COL, TICK_COL
+from .palette import AX_BG, BTN_BG, LABEL_COL, PALETTE, SPINE_COL, TICK_COL
+from .ui_compiled.ui_stack_editor import Ui_StackEditor
 
-# Consistent widget colours
-BTN_BG = "#1e1e3a"
-BTN_FG = "#ccccee"
-ENTRY_BG = "#1a1a2e"
+_SEMI = ["air", "vacuum", "glass", "sio2", "bk7", "al2o3"]
 
 
-def _swatch(idx: int) -> str:
+def _swatch_color(idx: int) -> str:
     return PALETTE[idx % len(PALETTE)]
 
 
-class LayerRow(tk.Frame):
-    """A single row in the layer editor representing one LayerSpec."""
+# ---------------------------------------------------------------------------
+# LayerRowWidget — single layer, created purely in Python (dynamic)
+# ---------------------------------------------------------------------------
+
+class LayerRowWidget(QWidget):
+    """One row in the layer list: swatch | name | material | thickness | sweep | ↑↓ | ×"""
+
+    changed          = Signal()
+    delete_requested = Signal(int)
+    move_requested   = Signal(int, int)   # (index, delta: ±1)
 
     def __init__(
         self,
-        parent,
         spec: LayerSpec,
         index: int,
         materials: list[str],
-        on_change: Callable,
-        on_delete: Callable[[int], None],
-        on_move: Callable[[int, int], None],
-        **kw,
-    ):
-        super().__init__(parent, bg=AX_BG, pady=2, padx=4, **kw)
-        self._spec = spec
+        parent: Optional[QWidget] = None,
+    ) -> None:
+        super().__init__(parent)
+        self._spec  = spec
         self._index = index
-        self._on_change = on_change
-        self._materials = materials
 
-        col = _swatch(index)
+        hl = QHBoxLayout(self)
+        hl.setContentsMargins(4, 2, 4, 2)
+        hl.setSpacing(4)
 
-        # Colour indicator
-        tk.Frame(self, bg=col, width=6).pack(side=tk.LEFT, fill=tk.Y)
+        # Colour swatch
+        swatch = QFrame()
+        swatch.setFixedWidth(6)
+        swatch.setStyleSheet(f"background: {_swatch_color(index)};")
+        hl.addWidget(swatch)
 
-        # Layer name
-        self._name_var = tk.StringVar(value=spec.name)
-        name_entry = tk.Entry(
-            self,
-            textvariable=self._name_var,
-            width=10,
-            bg=ENTRY_BG,
-            fg=LABEL_COL,
-            insertbackground=LABEL_COL,
-            relief=tk.FLAT,
-            font=("Consolas", 9),
-        )
-        name_entry.pack(side=tk.LEFT, padx=(4, 2))
-        self._name_var.trace_add("write", lambda *_: self._sync_name())
+        # Name
+        self._edit_name = QLineEdit(spec.name)
+        self._edit_name.setFixedWidth(88)
+        self._edit_name.textChanged.connect(self._sync_name)
+        hl.addWidget(self._edit_name)
 
-        # Material dropdown
-        self._mat_var = tk.StringVar(value=spec.material)
-        self._mat_cb = ttk.Combobox(
-            self,
-            textvariable=self._mat_var,
-            values=materials,
-            width=14,
-            font=("Consolas", 9),
-        )
-        self._mat_cb.pack(side=tk.LEFT, padx=2)
-        self._mat_var.trace_add("write", lambda *_: self._sync_material())
+        # Material
+        self._combo_mat = QComboBox()
+        self._combo_mat.addItems(materials)
+        idx = self._combo_mat.findText(spec.material)
+        if idx >= 0:
+            self._combo_mat.setCurrentIndex(idx)
+        else:
+            self._combo_mat.setCurrentText(spec.material)
+        self._combo_mat.setFixedWidth(120)
+        self._combo_mat.currentTextChanged.connect(self._sync_material)
+        hl.addWidget(self._combo_mat)
 
-        # Thickness
-        tk.Label(self, text="d:", bg=AX_BG, fg=TICK_COL, font=("Consolas", 9)).pack(
-            side=tk.LEFT
-        )
-        self._thick_var = tk.StringVar(value=str(spec.thickness_nm))
-        thick_entry = tk.Entry(
-            self,
-            textvariable=self._thick_var,
-            width=7,
-            bg=ENTRY_BG,
-            fg=LABEL_COL,
-            insertbackground=LABEL_COL,
-            relief=tk.FLAT,
-            font=("Consolas", 9),
-        )
-        thick_entry.pack(side=tk.LEFT, padx=2)
-        self._thick_var.trace_add("write", lambda *_: self._sync_thickness())
+        # Thickness label + entry
+        lbl_d = QLabel("d:")
+        lbl_d.setFixedWidth(14)
+        hl.addWidget(lbl_d)
 
-        tk.Label(self, text="nm", bg=AX_BG, fg=TICK_COL, font=("Consolas", 8)).pack(
-            side=tk.LEFT
-        )
+        self._edit_thick = QLineEdit(str(spec.thickness_nm))
+        self._edit_thick.setFixedWidth(60)
+        self._edit_thick.setValidator(QDoubleValidator(0.0, 1e9, 4))
+        self._edit_thick.textChanged.connect(self._sync_thickness)
+        hl.addWidget(self._edit_thick)
+
+        lbl_nm = QLabel("nm")
+        lbl_nm.setFixedWidth(20)
+        hl.addWidget(lbl_nm)
 
         # Sweep button
-        self._sweep_btn = tk.Button(
-            self,
-            text=self._sweep_label(),
-            width=3,
-            command=self._open_sweep_config,
-            relief=tk.FLAT,
-            font=("Consolas", 8),
-        )
-        self._sweep_btn.pack(side=tk.LEFT, padx=(4, 1))
+        self._btn_sweep = QPushButton(self._sweep_label())
+        self._btn_sweep.setFixedWidth(30)
+        self._btn_sweep.clicked.connect(self._open_sweep_config)
         self._refresh_sweep_btn()
+        hl.addWidget(self._btn_sweep)
 
-        # Move buttons
-        tk.Button(
-            self,
-            text="↑",
-            width=2,
-            command=lambda: on_move(index, -1),
-            bg=BTN_BG,
-            fg=BTN_FG,
-            relief=tk.FLAT,
-            font=("Consolas", 9),
-        ).pack(side=tk.RIGHT, padx=1)
-        tk.Button(
-            self,
-            text="↓",
-            width=2,
-            command=lambda: on_move(index, +1),
-            bg=BTN_BG,
-            fg=BTN_FG,
-            relief=tk.FLAT,
-            font=("Consolas", 9),
-        ).pack(side=tk.RIGHT, padx=1)
+        hl.addStretch()
+
+        # Move up/down
+        btn_up = QPushButton("\u2191")
+        btn_up.setFixedWidth(24)
+        btn_up.clicked.connect(lambda: self.move_requested.emit(self._index, -1))
+        hl.addWidget(btn_up)
+
+        btn_down = QPushButton("\u2193")
+        btn_down.setFixedWidth(24)
+        btn_down.clicked.connect(lambda: self.move_requested.emit(self._index, +1))
+        hl.addWidget(btn_down)
 
         # Delete
-        tk.Button(
-            self,
-            text="×",
-            width=2,
-            command=lambda: on_delete(index),
-            bg="#3a0a0a",
-            fg="#ff8888",
-            relief=tk.FLAT,
-            font=("Consolas", 9),
-        ).pack(side=tk.RIGHT, padx=(1, 4))
+        btn_del = QPushButton("\u00d7")
+        btn_del.setFixedWidth(24)
+        btn_del.setStyleSheet("QPushButton { background: #3a0a0a; color: #ff8888; }")
+        btn_del.clicked.connect(lambda: self.delete_requested.emit(self._index))
+        hl.addWidget(btn_del)
 
-    def _sync_name(self):
-        self._spec.name = self._name_var.get()
-        self._on_change()
+    # ------------------------------------------------------------------
+    # Sync helpers
+    # ------------------------------------------------------------------
 
-    def _sync_material(self):
-        self._spec.material = self._mat_var.get()
-        self._on_change()
+    @Slot(str)
+    def _sync_name(self, text: str) -> None:
+        self._spec.name = text
+        self.changed.emit()
 
-    def _sync_thickness(self):
+    @Slot(str)
+    def _sync_material(self, text: str) -> None:
+        self._spec.material = text
+        self.changed.emit()
+
+    @Slot(str)
+    def _sync_thickness(self, text: str) -> None:
         try:
-            self._spec.thickness_nm = float(self._thick_var.get())
-            self._on_change()
+            self._spec.thickness_nm = float(text)
+            self.changed.emit()
         except ValueError:
             pass
 
-    def destroy(self):
-        try:
-            self._mat_cb.configure(textvariable="")
-        except Exception:
-            pass
-        super().destroy()
-
     def update_materials(self, materials: list[str]) -> None:
-        self._materials = materials
-        self._mat_cb["values"] = materials
+        current = self._combo_mat.currentText()
+        self._combo_mat.blockSignals(True)
+        self._combo_mat.clear()
+        self._combo_mat.addItems(materials)
+        idx = self._combo_mat.findText(current)
+        if idx >= 0:
+            self._combo_mat.setCurrentIndex(idx)
+        else:
+            self._combo_mat.setCurrentText(current)
+        self._combo_mat.blockSignals(False)
+
+    # ------------------------------------------------------------------
+    # Sweep button helpers
+    # ------------------------------------------------------------------
 
     def _sweep_label(self) -> str:
         mode = self._spec.sweep_mode
         if mode == "material":
-            return "⊕M"
+            return "\u2295M"
         if mode == "mix":
-            return "⊕X"
-        return "≈"
+            return "\u2295X"
+        return "\u2248"
 
     def _refresh_sweep_btn(self) -> None:
         mode = self._spec.sweep_mode
         if mode:
-            self._sweep_btn.config(
-                text=self._sweep_label(), bg="#1a2a3a", fg="#00BFFF"
+            self._btn_sweep.setStyleSheet(
+                "QPushButton { background: #1a2a3a; color: #00BFFF; }"
             )
         else:
-            self._sweep_btn.config(text="≈", bg=BTN_BG, fg=TICK_COL)
+            self._btn_sweep.setStyleSheet(
+                f"QPushButton {{ background: {BTN_BG}; color: {TICK_COL}; }}"
+            )
+        self._btn_sweep.setText(self._sweep_label())
 
     def _open_sweep_config(self) -> None:
-        dlg = LayerSweepDialog(self, self._spec, self._materials)
-        if dlg.applied:
+        materials = [
+            self._combo_mat.itemText(i) for i in range(self._combo_mat.count())
+        ]
+        dlg = LayerSweepDialog(self._spec, materials, parent=self)
+        if dlg.exec() == QDialog.Accepted and dlg.applied:
             self._refresh_sweep_btn()
-            self._on_change()
+            self.changed.emit()
 
 
-class MixedLayerDialog(tk.Toplevel):
-    """Dialog to configure a mixed-material layer."""
+# ---------------------------------------------------------------------------
+# MixedLayerDialog
+# ---------------------------------------------------------------------------
 
-    def __init__(self, parent, materials: list[str], existing: LayerSpec | None = None):
+class MixedLayerDialog(QDialog):
+    """Configure a mixed-material layer (Material A + B with volume fraction)."""
+
+    def __init__(
+        self,
+        materials: list[str],
+        existing: Optional[LayerSpec] = None,
+        parent: Optional[QWidget] = None,
+    ) -> None:
         super().__init__(parent)
-        self.title("Mixed layer")
-        self.configure(bg=BG_DARK)
-        self.resizable(False, False)
+        from .ui_compiled.ui_mixed_layer_dialog import Ui_MixedLayerDialog
+        from ..eff_medium import MODELS
+
         self.result: LayerSpec | None = None
 
-        pad = {"padx": 8, "pady": 4}
+        self.ui = Ui_MixedLayerDialog()
+        self.ui.setupUi(self)
 
-        def row(label, widget_factory, row_idx):
-            tk.Label(
-                self, text=label, bg=BG_DARK, fg=LABEL_COL, font=("Consolas", 9)
-            ).grid(row=row_idx, column=0, sticky="e", **pad)
-            w = widget_factory()
-            w.grid(row=row_idx, column=1, sticky="ew", **pad)
-            return w
+        # Populate combos
+        self.ui.combo_mat_a.addItems(materials)
+        self.ui.combo_mat_b.addItems(materials)
+        self.ui.combo_model.addItems(list(MODELS.keys()))
 
-        # Name
-        self._name = tk.StringVar(value=existing.name if existing else "Mixed")
-        row(
-            "Name:",
-            lambda: tk.Entry(
-                self,
-                textvariable=self._name,
-                width=14,
-                bg=ENTRY_BG,
-                fg=LABEL_COL,
-                insertbackground=LABEL_COL,
-                relief=tk.FLAT,
-                font=("Consolas", 9),
-            ),
-            0,
+        # Pre-fill if editing existing
+        if existing:
+            self.ui.edit_name.setText(existing.name)
+            self.ui.combo_mat_a.setCurrentText(existing.material)
+            self.ui.combo_mat_b.setCurrentText(existing.mix_mat_b or "")
+            self.ui.slider_fraction.setValue(int(existing.mix_f * 100))
+            self.ui.edit_thickness.setText(str(existing.thickness_nm))
+            self.ui.combo_model.setCurrentText(existing.mix_model)
+        else:
+            self.ui.edit_name.setText("Mixed")
+            if materials:
+                self.ui.combo_mat_a.setCurrentIndex(0)
+            if len(materials) > 1:
+                self.ui.combo_mat_b.setCurrentIndex(1)
+
+        # Slider → label sync
+        self.ui.slider_fraction.valueChanged.connect(
+            lambda v: self.ui.lbl_fraction_val.setText(f"{v / 100:.2f}")
         )
 
-        # Material A
-        self._mat_a = tk.StringVar(
-            value=existing.material if existing else (materials[0] if materials else "")
-        )
-        row(
-            "Material A (f):",
-            lambda: ttk.Combobox(
-                self,
-                textvariable=self._mat_a,
-                values=materials,
-                width=14,
-                font=("Consolas", 9),
-            ),
-            1,
-        )
+        # Override accept to validate first
+        self.ui.button_box.accepted.disconnect()
+        self.ui.button_box.accepted.connect(self._ok)
 
-        # Material B
-        self._mat_b = tk.StringVar(
-            value=(
-                existing.mix_mat_b
-                if existing
-                else (materials[1] if len(materials) > 1 else "")
-            )
-        )
-        row(
-            "Material B (1-f):",
-            lambda: ttk.Combobox(
-                self,
-                textvariable=self._mat_b,
-                values=materials,
-                width=14,
-                font=("Consolas", 9),
-            ),
-            2,
-        )
-
-        # Volume fraction
-        self._f = tk.DoubleVar(value=existing.mix_f if existing else 0.5)
-        f_frame = tk.Frame(self, bg=BG_DARK)
-        self._f_label = tk.Label(
-            f_frame,
-            text=f"{self._f.get():.2f}",
-            bg=BG_DARK,
-            fg=TICK_COL,
-            font=("Consolas", 9),
-            width=5,
-        )
-        self._f_label.pack(side=tk.RIGHT)
-        scale = tk.Scale(
-            f_frame,
-            variable=self._f,
-            from_=0.0,
-            to=1.0,
-            resolution=0.01,
-            orient=tk.HORIZONTAL,
-            length=140,
-            bg=BG_DARK,
-            fg=LABEL_COL,
-            troughcolor=SPINE_COL,
-            highlightthickness=0,
-            showvalue=False,
-            command=lambda v: self._f_label.config(text=f"{float(v):.2f}"),
-        )
-        scale.pack(side=tk.LEFT)
-        tk.Label(
-            self,
-            text="Volume fraction f:",
-            bg=BG_DARK,
-            fg=LABEL_COL,
-            font=("Consolas", 9),
-        ).grid(row=3, column=0, sticky="e", **pad)
-        f_frame.grid(row=3, column=1, sticky="ew", **pad)
-
-        # Thickness
-        self._thick = tk.StringVar(
-            value=str(existing.thickness_nm) if existing else "100"
-        )
-        row(
-            "Thickness (nm):",
-            lambda: tk.Entry(
-                self,
-                textvariable=self._thick,
-                width=10,
-                bg=ENTRY_BG,
-                fg=LABEL_COL,
-                insertbackground=LABEL_COL,
-                relief=tk.FLAT,
-                font=("Consolas", 9),
-            ),
-            4,
-        )
-
-        # Model
-        from ..eff_medium import MODELS
-
-        self._model = tk.StringVar(
-            value=existing.mix_model if existing else "Bruggeman"
-        )
-        row(
-            "Model:",
-            lambda: ttk.Combobox(
-                self,
-                textvariable=self._model,
-                values=list(MODELS.keys()),
-                width=14,
-                font=("Consolas", 9),
-            ),
-            5,
-        )
-
-        # Buttons
-        btn_frame = tk.Frame(self, bg=BG_DARK)
-        btn_frame.grid(row=6, column=0, columnspan=2, pady=8)
-        tk.Button(
-            btn_frame,
-            text="Add",
-            command=self._ok,
-            bg="#1a3a1a",
-            fg="#98FB98",
-            relief=tk.FLAT,
-            font=("Consolas", 9),
-            padx=10,
-        ).pack(side=tk.LEFT, padx=6)
-        tk.Button(
-            btn_frame,
-            text="Cancel",
-            command=self.destroy,
-            bg=BTN_BG,
-            fg=BTN_FG,
-            relief=tk.FLAT,
-            font=("Consolas", 9),
-            padx=10,
-        ).pack(side=tk.LEFT, padx=6)
-
-        self.grab_set()
-        self.wait_window()
-
-    def _ok(self):
+    def _ok(self) -> None:
         try:
-            thick = float(self._thick.get())
+            thick = float(self.ui.edit_thickness.text())
         except ValueError:
-            messagebox.showerror("Error", "Invalid thickness value.", parent=self)
+            QMessageBox.critical(self, "Error", "Invalid thickness value.")
             return
         self.result = LayerSpec(
-            name=self._name.get(),
-            material=self._mat_a.get(),
-            thickness_nm=thick,
-            mix_mat_b=self._mat_b.get(),
-            mix_f=self._f.get(),
-            mix_model=self._model.get(),
+            name        = self.ui.edit_name.text(),
+            material    = self.ui.combo_mat_a.currentText(),
+            thickness_nm= thick,
+            mix_mat_b   = self.ui.combo_mat_b.currentText(),
+            mix_f       = self.ui.slider_fraction.value() / 100.0,
+            mix_model   = self.ui.combo_model.currentText(),
         )
-        self.destroy()
+        self.accept()
 
 
-class LayerSweepDialog(tk.Toplevel):
-    """Configure sweep mode for a single layer (material list or mix fraction)."""
+# ---------------------------------------------------------------------------
+# LayerSweepDialog
+# ---------------------------------------------------------------------------
 
-    def __init__(self, parent, spec: LayerSpec, all_materials: list[str]):
+class LayerSweepDialog(QDialog):
+    """Configure sweep mode (None / Material list / Mix fraction) for one layer."""
+
+    def __init__(
+        self,
+        spec: LayerSpec,
+        all_materials: list[str],
+        parent: Optional[QWidget] = None,
+    ) -> None:
         super().__init__(parent)
-        self.title("Sweep config")
-        self.configure(bg=BG_DARK)
-        self.resizable(False, False)
+        from .ui_compiled.ui_layer_sweep_dialog import Ui_LayerSweepDialog
+        from ..eff_medium import MODELS
+
         self.applied = False
         self._spec = spec
-        self._all_materials = all_materials
 
-        pad = {"padx": 8, "pady": 3}
+        self.ui = Ui_LayerSweepDialog()
+        self.ui.setupUi(self)
 
-        # ---- Mode selector ----
-        mode_frame = tk.Frame(self, bg=BG_DARK)
-        mode_frame.pack(fill=tk.X, padx=8, pady=(8, 4))
-        tk.Label(mode_frame, text="Mode:", bg=BG_DARK, fg=LABEL_COL,
-                 font=("Consolas", 9)).pack(side=tk.LEFT)
-        self._mode_var = tk.StringVar(value=spec.sweep_mode if spec.sweep_mode else "none")
-        for val, txt in (("none", "None"), ("material", "Material"), ("mix", "Mix fraction")):
-            tk.Radiobutton(
-                mode_frame, text=txt, variable=self._mode_var, value=val,
-                bg=BG_DARK, fg=LABEL_COL, selectcolor=AX_BG,
-                activebackground=BG_DARK, font=("Consolas", 9),
-                command=self._on_mode_change,
-            ).pack(side=tk.LEFT, padx=6)
+        # Populate material list
+        self.ui.list_materials.clear()
+        for mat in all_materials:
+            item = QListWidgetItem(mat)
+            self.ui.list_materials.addItem(item)
+            if mat in spec.sweep_materials:
+                item.setSelected(True)
 
-        # ---- Content area (switched by mode) ----
-        self._content = tk.Frame(self, bg=BG_DARK)
-        self._content.pack(fill=tk.BOTH, expand=True, padx=8)
+        # Mix combos
+        self.ui.combo_mix_mat_b.addItems(all_materials)
+        self.ui.combo_mix_model.addItems(list(MODELS.keys()))
+        if spec.sweep_mat_b:
+            self.ui.combo_mix_mat_b.setCurrentText(spec.sweep_mat_b)
+        elif len(all_materials) > 1:
+            self.ui.combo_mix_mat_b.setCurrentIndex(1)
+        if spec.sweep_mix_model:
+            self.ui.combo_mix_model.setCurrentText(spec.sweep_mix_model)
+        self.ui.spin_n_pts.setValue(spec.sweep_n_pts or 20)
 
-        self._frame_none = self._build_none_frame()
-        self._frame_mat  = self._build_material_frame()
-        self._frame_mix  = self._build_mix_frame()
+        # Update hint label
+        self.ui.lbl_mix_hint.setText(f"(Mat A = {spec.material}, f=1)")
 
-        # ---- Buttons ----
-        btn_frame = tk.Frame(self, bg=BG_DARK)
-        btn_frame.pack(pady=8)
-        tk.Button(btn_frame, text="Apply", command=self._apply,
-                  bg="#1a3a1a", fg="#98FB98", relief=tk.FLAT,
-                  font=("Consolas", 9), padx=10).pack(side=tk.LEFT, padx=6)
-        tk.Button(btn_frame, text="Cancel", command=self.destroy,
-                  bg=BTN_BG, fg=BTN_FG, relief=tk.FLAT,
-                  font=("Consolas", 9), padx=10).pack(side=tk.LEFT, padx=6)
+        # Set initial mode
+        cur = spec.sweep_mode or "none"
+        if cur == "material":
+            self.ui.radio_material.setChecked(True)
+        elif cur == "mix":
+            self.ui.radio_mix.setChecked(True)
+        else:
+            self.ui.radio_none.setChecked(True)
+        self._on_mode_changed()
 
-        self._on_mode_change()
-        self.grab_set()
-        self.wait_window()
+        # Wire mode radios
+        self.ui.radio_none.toggled.connect(lambda c: c and self._on_mode_changed())
+        self.ui.radio_material.toggled.connect(lambda c: c and self._on_mode_changed())
+        self.ui.radio_mix.toggled.connect(lambda c: c and self._on_mode_changed())
 
-    # ---- Frame builders ----
-
-    def _build_none_frame(self) -> tk.Frame:
-        f = tk.Frame(self._content, bg=BG_DARK)
-        tk.Label(f, text="No sweep — single spectrum.", bg=BG_DARK, fg=TICK_COL,
-                 font=("Consolas", 9), pady=12).pack()
-        return f
-
-    def _build_material_frame(self) -> tk.Frame:
-        f = tk.Frame(self._content, bg=BG_DARK)
-        tk.Label(f, text="Materials to sweep:", bg=BG_DARK, fg=LABEL_COL,
-                 font=("Consolas", 9)).pack(anchor="w", pady=(4, 2))
-        lb_frame = tk.Frame(f, bg=BG_DARK)
-        lb_frame.pack(fill=tk.BOTH, expand=True)
-        sb = tk.Scrollbar(lb_frame, orient=tk.VERTICAL)
-        self._mat_lb = tk.Listbox(
-            lb_frame, selectmode=tk.EXTENDED, height=8, width=22,
-            bg=AX_BG, fg=LABEL_COL, selectbackground=SPINE_COL,
-            selectforeground=LABEL_COL, font=("Consolas", 9),
-            relief=tk.FLAT, yscrollcommand=sb.set,
+        # Select All / Clear buttons
+        self.ui.btn_select_all.clicked.connect(
+            lambda: self.ui.list_materials.selectAll()
         )
-        sb.config(command=self._mat_lb.yview)
-        self._mat_lb.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        sb.pack(side=tk.RIGHT, fill=tk.Y)
-        for m in self._all_materials:
-            self._mat_lb.insert(tk.END, m)
-        # Pre-select previously chosen materials
-        for i, m in enumerate(self._all_materials):
-            if m in self._spec.sweep_materials:
-                self._mat_lb.selection_set(i)
-        sel_frame = tk.Frame(f, bg=BG_DARK)
-        sel_frame.pack(anchor="w", pady=2)
-        tk.Button(sel_frame, text="Select All",
-                  command=lambda: self._mat_lb.select_set(0, tk.END),
-                  bg=BTN_BG, fg=BTN_FG, relief=tk.FLAT,
-                  font=("Consolas", 8), padx=6).pack(side=tk.LEFT, padx=(0, 4))
-        tk.Button(sel_frame, text="Clear",
-                  command=lambda: self._mat_lb.selection_clear(0, tk.END),
-                  bg=BTN_BG, fg=BTN_FG, relief=tk.FLAT,
-                  font=("Consolas", 8), padx=6).pack(side=tk.LEFT)
-        return f
+        self.ui.btn_clear_sel.clicked.connect(
+            lambda: self.ui.list_materials.clearSelection()
+        )
 
-    def _build_mix_frame(self) -> tk.Frame:
-        from ..eff_medium import MODELS
-        f = tk.Frame(self._content, bg=BG_DARK)
-        pad = {"padx": 4, "pady": 3}
+        # Override OK to validate
+        self.ui.button_box.accepted.disconnect()
+        self.ui.button_box.accepted.connect(self._apply)
 
-        def row(label_text, widget, r):
-            tk.Label(f, text=label_text, bg=BG_DARK, fg=LABEL_COL,
-                     font=("Consolas", 9)).grid(row=r, column=0, sticky="e", **pad)
-            widget.grid(row=r, column=1, sticky="ew", **pad)
+    @Slot()
+    def _on_mode_changed(self) -> None:
+        if self.ui.radio_none.isChecked():
+            self.ui.content_stack.setCurrentIndex(0)
+        elif self.ui.radio_material.isChecked():
+            self.ui.content_stack.setCurrentIndex(1)
+        else:
+            self.ui.content_stack.setCurrentIndex(2)
 
-        self._mix_mat_b = tk.StringVar(value=self._spec.sweep_mat_b or
-                                        (self._all_materials[1] if len(self._all_materials) > 1 else ""))
-        row("Material B (f=0):",
-            ttk.Combobox(f, textvariable=self._mix_mat_b,
-                         values=self._all_materials, width=16, font=("Consolas", 9)), 0)
-
-        self._mix_model = tk.StringVar(value=self._spec.sweep_mix_model)
-        row("Model:",
-            ttk.Combobox(f, textvariable=self._mix_model,
-                         values=list(MODELS.keys()), width=16, font=("Consolas", 9)), 1)
-
-        self._mix_n_pts = tk.StringVar(value=str(self._spec.sweep_n_pts))
-        n_entry = tk.Entry(f, textvariable=self._mix_n_pts, width=6,
-                           bg=ENTRY_BG, fg=LABEL_COL, insertbackground=LABEL_COL,
-                           relief=tk.FLAT, font=("Consolas", 9))
-        row("N points:", n_entry, 2)
-
-        tk.Label(f, text=f"  (Mat A = {self._spec.material}, f=1)",
-                 bg=BG_DARK, fg=TICK_COL, font=("Consolas", 8)
-                 ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(2, 0))
-        return f
-
-    # ---- Mode switching ----
-
-    def _on_mode_change(self) -> None:
-        for fr in (self._frame_none, self._frame_mat, self._frame_mix):
-            fr.pack_forget()
-        mode = self._mode_var.get()
-        {"none": self._frame_none, "material": self._frame_mat,
-         "mix": self._frame_mix}[mode].pack(fill=tk.BOTH, expand=True)
-        self.update_idletasks()
-
-    # ---- Apply ----
-
+    @Slot()
     def _apply(self) -> None:
-        mode = self._mode_var.get()
-        if mode == "none":
-            self._spec.sweep_mode = ""
+        if self.ui.radio_none.isChecked():
+            self._spec.sweep_mode      = ""
             self._spec.sweep_materials = []
-            self._spec.sweep_mat_b = ""
-        elif mode == "material":
-            selected = [self._mat_lb.get(i) for i in self._mat_lb.curselection()]
+            self._spec.sweep_mat_b     = ""
+        elif self.ui.radio_material.isChecked():
+            selected = [
+                item.text()
+                for item in self.ui.list_materials.selectedItems()
+            ]
             if len(selected) < 2:
-                messagebox.showwarning("Selection", "Select at least 2 materials.", parent=self)
+                QMessageBox.warning(self, "Selection", "Select at least 2 materials.")
                 return
-            self._spec.sweep_mode = "material"
+            self._spec.sweep_mode      = "material"
             self._spec.sweep_materials = selected
-        elif mode == "mix":
-            try:
-                n_pts = int(self._mix_n_pts.get())
-                if n_pts < 2:
-                    raise ValueError
-            except ValueError:
-                messagebox.showerror("Error", "N points must be an integer ≥ 2.", parent=self)
-                return
-            mat_b = self._mix_mat_b.get().strip()
+        else:  # mix
+            mat_b = self.ui.combo_mix_mat_b.currentText().strip()
             if not mat_b:
-                messagebox.showerror("Error", "Select Material B.", parent=self)
+                QMessageBox.critical(self, "Error", "Select Material B.")
                 return
-            self._spec.sweep_mode = "mix"
-            self._spec.sweep_mat_b = mat_b
-            self._spec.sweep_mix_model = self._mix_model.get()
-            self._spec.sweep_n_pts = n_pts
+            self._spec.sweep_mode      = "mix"
+            self._spec.sweep_mat_b     = mat_b
+            self._spec.sweep_mix_model = self.ui.combo_mix_model.currentText()
+            self._spec.sweep_n_pts     = self.ui.spin_n_pts.value()
         self.applied = True
-        self.destroy()
+        self.accept()
 
 
-class StackEditor(tk.Frame):
-    """Full stack editor: superstrate, layer list, substrate."""
+# ---------------------------------------------------------------------------
+# StackEditor — main widget
+# ---------------------------------------------------------------------------
 
-    def __init__(self, parent, materials: list[str], on_change: Callable, **kw):
-        super().__init__(parent, bg=BG_DARK, **kw)
-        self._materials = materials
-        self._on_change = on_change
+class StackEditor(QWidget):
+    """Full stack editor: superstrate | layer list | substrate."""
+
+    changed = Signal()
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+
+        self.ui = Ui_StackEditor()
+        self.ui.setupUi(self)
+
+        self._materials: list[str] = []
         self._config = StackConfig()
-        self._rows: list[LayerRow] = []
+        self._rows: list[LayerRowWidget] = []
 
-        self._build_ui()
+        # Populate boundary combos
+        self.ui.combo_superstrate.addItems(_SEMI)
+        self.ui.combo_substrate.addItems(_SEMI)
 
-    # ------------------------------------------------------------------
-    # UI construction
-    # ------------------------------------------------------------------
+        self.ui.combo_superstrate.setCurrentText(self._config.superstrate)
+        self.ui.combo_substrate.setCurrentText(self._config.substrate)
 
-    def _build_ui(self):
-        def label(parent, text, **kw):
-            return tk.Label(
-                parent, text=text, bg=BG_DARK, fg=LABEL_COL, font=("Consolas", 9), **kw
-            )
+        self.ui.combo_superstrate.currentTextChanged.connect(self._sync_boundary)
+        self.ui.combo_substrate.currentTextChanged.connect(self._sync_boundary)
 
-        def combo(parent, var, values, width=16):
-            cb = ttk.Combobox(
-                parent,
-                textvariable=var,
-                values=values,
-                width=width,
-                font=("Consolas", 9),
-            )
-            return cb
-
-        SEMI = ["air", "vacuum", "glass", "sio2", "bk7"]
-
-        # ---- Superstrate ----
-        sup_frame = tk.Frame(self, bg=BG_DARK)
-        sup_frame.pack(fill=tk.X, pady=(6, 2), padx=6)
-        label(sup_frame, "Superstrate:").pack(side=tk.LEFT)
-        self._sup_var = tk.StringVar(value=self._config.superstrate)
-        self._sup_combo = combo(sup_frame, self._sup_var, SEMI, 10)
-        self._sup_combo.pack(side=tk.LEFT, padx=4)
-        self._sup_var.trace_add("write", lambda *_: self._sync_boundary())
-
-        # ---- Layer list ----
-        label(self, "Layers  (top → bottom):").pack(anchor="w", padx=6, pady=(6, 2))
-
-        self._list_frame = tk.Frame(self, bg=BG_DARK)
-        self._list_frame.pack(fill=tk.BOTH, expand=True, padx=6)
-
-        # ---- Buttons ----
-        btn_frame = tk.Frame(self, bg=BG_DARK)
-        btn_frame.pack(fill=tk.X, padx=6, pady=6)
-        tk.Button(
-            btn_frame,
-            text="+ Layer",
-            command=self._add_layer,
-            bg="#1a2a3a",
-            fg="#00BFFF",
-            relief=tk.FLAT,
-            font=("Consolas", 9),
-            padx=8,
-        ).pack(side=tk.LEFT, padx=(0, 4))
-        tk.Button(
-            btn_frame,
-            text="+ Mixed",
-            command=self._add_mixed,
-            bg="#1a1a3a",
-            fg="#DA70D6",
-            relief=tk.FLAT,
-            font=("Consolas", 9),
-            padx=8,
-        ).pack(side=tk.LEFT)
-
-        # ---- Substrate ----
-        sub_frame = tk.Frame(self, bg=BG_DARK)
-        sub_frame.pack(fill=tk.X, pady=(2, 6), padx=6)
-        label(sub_frame, "Substrate:").pack(side=tk.LEFT)
-        self._sub_var = tk.StringVar(value=self._config.substrate)
-        self._sub_combo = combo(sub_frame, self._sub_var, SEMI, 10)
-        self._sub_combo.pack(side=tk.LEFT, padx=4)
-        self._sub_var.trace_add("write", lambda *_: self._sync_boundary())
+        self.ui.btn_add_layer.clicked.connect(self._add_layer)
+        self.ui.btn_add_mixed.clicked.connect(self._add_mixed)
 
     # ------------------------------------------------------------------
-    # Internal helpers
+    # Boundary sync
     # ------------------------------------------------------------------
 
-    def _sync_boundary(self):
-        self._config.superstrate = self._sup_var.get()
-        self._config.substrate = self._sub_var.get()
-        self._on_change()
+    @Slot()
+    def _sync_boundary(self) -> None:
+        self._config.superstrate = self.ui.combo_superstrate.currentText()
+        self._config.substrate   = self.ui.combo_substrate.currentText()
+        self.changed.emit()
 
-    def destroy(self):
-        for cb in (self._sup_combo, self._sub_combo):
-            try:
-                cb.configure(textvariable="")
-            except Exception:
-                pass
-        super().destroy()
+    # ------------------------------------------------------------------
+    # Layer management
+    # ------------------------------------------------------------------
 
-    def _rebuild_rows(self):
-        for r in self._rows:
-            r.destroy()
+    def _rebuild_rows(self) -> None:
+        # Remove existing rows (don't touch the trailing spacer)
+        for row in self._rows:
+            row.deleteLater()
         self._rows = []
+
+        vl: QVBoxLayout = self.ui.layers_container.layout()
+        # Insert rows before the trailing spacer (last item)
         for i, spec in enumerate(self._config.layers):
-            row = LayerRow(
-                self._list_frame,
-                spec,
-                i,
-                self._materials,
-                on_change=self._on_change,
-                on_delete=self._delete_layer,
-                on_move=self._move_layer,
-            )
-            row.pack(fill=tk.X, pady=2)
+            row = LayerRowWidget(spec, i, self._materials)
+            row.changed.connect(self.changed)
+            row.delete_requested.connect(self._delete_layer)
+            row.move_requested.connect(self._move_layer)
+            # Insert before trailing spacer
+            vl.insertWidget(vl.count() - 1, row)
             self._rows.append(row)
 
-    def _add_layer(self):
-        n = len(self._config.layers) + 1
+    @Slot()
+    def _add_layer(self) -> None:
+        n   = len(self._config.layers) + 1
         mat = self._materials[0] if self._materials else "air"
-        spec = LayerSpec(name=f"Layer {n}", material=mat, thickness_nm=100.0)
-        self._config.layers.append(spec)
+        self._config.layers.append(
+            LayerSpec(name=f"Layer {n}", material=mat, thickness_nm=100.0)
+        )
         self._rebuild_rows()
-        self._on_change()
+        self.changed.emit()
 
-    def _add_mixed(self):
-        dlg = MixedLayerDialog(self, self._materials)
-        if dlg.result:
+    @Slot()
+    def _add_mixed(self) -> None:
+        dlg = MixedLayerDialog(self._materials, parent=self)
+        if dlg.exec() == QDialog.Accepted and dlg.result:
             self._config.layers.append(dlg.result)
             self._rebuild_rows()
-            self._on_change()
+            self.changed.emit()
 
-    def _delete_layer(self, index: int):
+    @Slot(int)
+    def _delete_layer(self, index: int) -> None:
         if 0 <= index < len(self._config.layers):
             del self._config.layers[index]
             self._rebuild_rows()
-            self._on_change()
+            self.changed.emit()
 
-    def _move_layer(self, index: int, direction: int):
-        layers = self._config.layers
-        new_idx = index + direction
+    @Slot(int, int)
+    def _move_layer(self, index: int, delta: int) -> None:
+        layers  = self._config.layers
+        new_idx = index + delta
         if 0 <= new_idx < len(layers):
             layers[index], layers[new_idx] = layers[new_idx], layers[index]
             self._rebuild_rows()
-            self._on_change()
+            self.changed.emit()
 
     # ------------------------------------------------------------------
     # Public API
@@ -703,8 +487,12 @@ class StackEditor(tk.Frame):
 
     def set_config(self, config: StackConfig) -> None:
         self._config = config
-        self._sup_var.set(config.superstrate)
-        self._sub_var.set(config.substrate)
+        self.ui.combo_superstrate.blockSignals(True)
+        self.ui.combo_substrate.blockSignals(True)
+        self.ui.combo_superstrate.setCurrentText(config.superstrate)
+        self.ui.combo_substrate.setCurrentText(config.substrate)
+        self.ui.combo_superstrate.blockSignals(False)
+        self.ui.combo_substrate.blockSignals(False)
         self._rebuild_rows()
 
     def update_materials(self, materials: list[str]) -> None:

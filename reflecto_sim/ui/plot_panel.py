@@ -1,167 +1,215 @@
-"""Matplotlib plot panel embedded in Tkinter — scientific dark theme."""
+"""
+PlotPanel — six-subplot pyqtgraph display panel.
+
+Reflection column:   |r|(λ),  R(λ),    φ_r(λ)
+Transmission column: |t|(λ),  T(λ),    φ_t(λ)
+
+Interactive features
+--------------------
+* Linked X axes (zoom/pan all subplots together)
+* Crosshair cursor showing values at mouse position
+* Colourbar (7th column) for mix-fraction sweeps
+* Log Y, Autofit Y, phase unwrapping
+"""
 
 from __future__ import annotations
 
-import tkinter as tk
-from tkinter import ttk
+from typing import Optional
 
 import numpy as np
-import matplotlib
+import pyqtgraph as pg
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QWidget
 
-matplotlib.use("TkAgg")
-import matplotlib.pyplot as plt
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
-from matplotlib.figure import Figure
+from .palette import (
+    AX_BG, BG_DARK, LABEL_COL, PALETTE, SPINE_COL, TICK_COL,
+)
+from .ui_compiled.ui_plot_panel import Ui_PlotPanel
 
-# ---- Dark scientific palette ------------------------------------------------
-BG_DARK = "#0d0d1a"
-AX_BG = "#12122a"
-GRID_COL = "#2a2a4a"
-TICK_COL = "#aaaacc"
-LABEL_COL = "#ccccee"
-SPINE_COL = "#3a3a5a"
-PALETTE = [
-    "#00BFFF",
-    "#FF6B6B",
-    "#98FB98",
-    "#FFD700",
-    "#DA70D6",
-    "#FF8C00",
-    "#7FFFD4",
-    "#FF69B4",
+# Re-export palette constants for backward-compat imports from app.py
+__all__ = [
+    "PlotPanel",
+    "BG_DARK", "AX_BG", "LABEL_COL", "TICK_COL", "SPINE_COL", "PALETTE",
 ]
 
 
-def _style_ax(ax, ylabel: str, xlabel: str = "", bottom: bool = False) -> None:
-    ax.set_facecolor(AX_BG)
-    ax.tick_params(colors=TICK_COL, labelsize=8, direction="in", length=4)
-    ax.yaxis.label.set_color(LABEL_COL)
-    ax.xaxis.label.set_color(LABEL_COL)
-    ax.set_ylabel(ylabel, fontsize=9)
-    if bottom:
-        ax.set_xlabel(xlabel, fontsize=9)
+def _style_plot(pi: pg.PlotItem, ylabel: str, show_x: bool = False) -> None:
+    """Apply dark scientific style to a PlotItem."""
+    pi.getViewBox().setBackgroundColor(AX_BG)
+    pi.showGrid(x=True, y=True, alpha=0.35)
+    pi.setLabel("left", ylabel, color=LABEL_COL)
+    for ax_name in ("left", "bottom", "top", "right"):
+        ax = pi.getAxis(ax_name)
+        ax.setPen(pg.mkPen(SPINE_COL))
+        ax.setTextPen(pg.mkPen(TICK_COL))
+    if not show_x:
+        pi.getAxis("bottom").setStyle(showValues=False)
     else:
-        ax.tick_params(labelbottom=False)
-    ax.grid(color=GRID_COL, linewidth=0.5, linestyle="--", alpha=0.7)
-    for spine in ax.spines.values():
-        spine.set_color(SPINE_COL)
-        spine.set_linewidth(0.8)
+        pi.setLabel("bottom", "Wavelength (nm)", color=LABEL_COL)
 
 
-def _na_placeholder(ax, msg: str) -> None:
-    ax.text(
-        0.5,
-        0.5,
-        msg,
-        transform=ax.transAxes,
-        ha="center",
-        va="center",
-        color=TICK_COL,
-        fontsize=8,
-        style="italic",
-    )
+class PlotPanel(QWidget):
+    """Six-subplot pyqtgraph panel: reflection + transmission observables."""
 
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
 
-class PlotPanel(tk.Frame):
-    """Six-subplot panel: reflection (|r|, R, φ_r) and transmission (|t|, T, φ_t)."""
+        self.ui = Ui_PlotPanel()
+        self.ui.setupUi(self)
 
-    def __init__(self, parent, **kw):
-        super().__init__(parent, bg=BG_DARK, **kw)
-
-        self._lam: np.ndarray | None = None
-        self._amp: np.ndarray | None = None
-        self._R: np.ndarray | None = None
-        self._phi: np.ndarray | None = None
-        self._amp_t: np.ndarray | None = None
-        self._T_t: np.ndarray | None = None
-        self._phi_t: np.ndarray | None = None
-        self._unwrap = False
+        self._unwrap  = False
         self._autofit = False
-        self._log_y = False
-        self._colorbar = None
+        self._log_y   = False
 
-        self.fig = Figure(figsize=(11, 7), facecolor=BG_DARK)
-        self.fig.subplots_adjust(
-            hspace=0.06, wspace=0.32, left=0.08, right=0.97, top=0.93, bottom=0.08
-        )
+        # Stored data for hover and display-option re-renders
+        self._lam:    np.ndarray | None = None
+        self._amp:    np.ndarray | None = None
+        self._R:      np.ndarray | None = None
+        self._phi:    np.ndarray | None = None
+        self._amp_t:  np.ndarray | None = None
+        self._T_t:    np.ndarray | None = None
+        self._phi_t:  np.ndarray | None = None
 
-        # Left column — reflection
-        self.ax_r = self.fig.add_subplot(3, 2, 1)
-        self.ax_R = self.fig.add_subplot(3, 2, 3, sharex=self.ax_r)
-        self.ax_phi = self.fig.add_subplot(3, 2, 5, sharex=self.ax_r)
+        self._colorbar_plot: pg.PlotItem | None = None
 
-        # Right column — transmission
-        self.ax_t = self.fig.add_subplot(3, 2, 2, sharex=self.ax_r)
-        self.ax_T = self.fig.add_subplot(3, 2, 4, sharex=self.ax_r)
-        self.ax_phi_t = self.fig.add_subplot(3, 2, 6, sharex=self.ax_r)
+        self._setup_plots()
+        self._setup_crosshair()
+        self._setup_hover()
 
-        self._style_all()
+    # ------------------------------------------------------------------
+    # Setup
+    # ------------------------------------------------------------------
+
+    def _setup_plots(self) -> None:
+        glw: pg.GraphicsLayoutWidget = self.ui.glw
+        glw.setBackground(BG_DARK)
+        glw.ci.layout.setSpacing(2)
+
+        # Row 0
+        self.pi_r   = glw.addPlot(row=0, col=0)
+        self.pi_t   = glw.addPlot(row=0, col=1)
+        # Row 1
+        self.pi_R   = glw.addPlot(row=1, col=0)
+        self.pi_T   = glw.addPlot(row=1, col=1)
+        # Row 2
+        self.pi_phi   = glw.addPlot(row=2, col=0)
+        self.pi_phi_t = glw.addPlot(row=2, col=1)
+
+        _style_plot(self.pi_r,     "|r|",        show_x=False)
+        _style_plot(self.pi_t,     "|t|",        show_x=False)
+        _style_plot(self.pi_R,     "R = |r|\u00b2", show_x=False)
+        _style_plot(self.pi_T,     "T",           show_x=False)
+        _style_plot(self.pi_phi,   "\u03c6\u1d63 (rad)", show_x=True)
+        _style_plot(self.pi_phi_t, "\u03c6\u209c (rad)", show_x=True)
 
         # Column headers
-        self.ax_r.set_title("Reflection", color=LABEL_COL, fontsize=9, pad=4)
-        self.ax_t.set_title("Transmission", color=LABEL_COL, fontsize=9, pad=4)
+        self.pi_r.setTitle("Reflection",    color=LABEL_COL)
+        self.pi_t.setTitle("Transmission",  color=LABEL_COL)
 
-        self.canvas = FigureCanvasTkAgg(self.fig, master=self)
-        self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        # Link all X axes to pi_r
+        for pi in (self.pi_t, self.pi_R, self.pi_T, self.pi_phi, self.pi_phi_t):
+            pi.setXLink(self.pi_r)
 
-        # Toolbar
-        toolbar_frame = tk.Frame(self, bg=BG_DARK)
-        toolbar_frame.pack(fill=tk.X, side=tk.BOTTOM)
-        self.toolbar = NavigationToolbar2Tk(self.canvas, toolbar_frame)
-        self.toolbar.config(background=BG_DARK)
-        for btn in self.toolbar.winfo_children():
-            try:
-                btn.config(background=BG_DARK, foreground=LABEL_COL)
-            except Exception:
-                pass
-        self.toolbar.update()
-
-        # Hover annotations
-        self._vlines = []
-        self._status_var = tk.StringVar(value="")
-        status_bar = tk.Label(
-            self,
-            textvariable=self._status_var,
-            anchor="w",
-            bg=BG_DARK,
-            fg=TICK_COL,
-            font=("Consolas", 8),
+    def _all_plots(self) -> tuple[pg.PlotItem, ...]:
+        return (
+            self.pi_r, self.pi_t,
+            self.pi_R, self.pi_T,
+            self.pi_phi, self.pi_phi_t,
         )
-        status_bar.pack(fill=tk.X, side=tk.BOTTOM)
-
-        self.canvas.mpl_connect("motion_notify_event", self._on_hover)
-        self.canvas.mpl_connect("axes_leave_event", self._on_leave)
 
     # ------------------------------------------------------------------
-    # Internal helpers
+    # Crosshair
     # ------------------------------------------------------------------
 
-    _SUBPLOT_ADJ = dict(
-        hspace=0.06, wspace=0.32, left=0.08, right=0.97, top=0.93, bottom=0.08
-    )
+    def _setup_crosshair(self) -> None:
+        self._vlines: list[pg.InfiniteLine] = []
+        for pi in self._all_plots():
+            vl = pg.InfiniteLine(angle=90, movable=False,
+                                 pen=pg.mkPen("#ffffff", width=0.6, style=Qt.DotLine))
+            pi.addItem(vl, ignoreBounds=True)
+            self._vlines.append(vl)
 
-    def _style_all(self) -> None:
-        _style_ax(self.ax_r, r"|r|", bottom=False)
-        _style_ax(self.ax_R, r"R = |r|²", bottom=False)
-        _style_ax(self.ax_phi, r"φ_r (rad)", xlabel="Wavelength (nm)", bottom=True)
-        _style_ax(self.ax_t, r"|t|", bottom=False)
-        _style_ax(self.ax_T, r"T", bottom=False)
-        _style_ax(self.ax_phi_t, r"φ_t (rad)", xlabel="Wavelength (nm)", bottom=True)
-        if self._colorbar is None:
-            self.fig.subplots_adjust(**self._SUBPLOT_ADJ)
-        self._apply_yscale()
+    def _restore_crosshairs(self) -> None:
+        """Re-add crosshair lines after a pi.clear() call."""
+        self._vlines = []
+        for pi in self._all_plots():
+            vl = pg.InfiniteLine(angle=90, movable=False,
+                                 pen=pg.mkPen("#ffffff", width=0.6, style=Qt.DotLine))
+            pi.addItem(vl, ignoreBounds=True)
+            self._vlines.append(vl)
+
+    def _move_crosshair(self, x: float) -> None:
+        for vl in self._vlines:
+            vl.setPos(x)
+
+    # ------------------------------------------------------------------
+    # Hover
+    # ------------------------------------------------------------------
+
+    def _setup_hover(self) -> None:
+        self._proxy = pg.SignalProxy(
+            self.ui.glw.scene().sigMouseMoved,
+            rateLimit=60,
+            slot=self._on_mouse_move,
+        )
+
+    def _on_mouse_move(self, event) -> None:
+        if self._lam is None:
+            return
+        pos = event[0]
+        vb = self.pi_r.getViewBox()
+        if not vb.sceneBoundingRect().contains(pos):
+            # Try any plot
+            for pi in self._all_plots():
+                if pi.getViewBox().sceneBoundingRect().contains(pos):
+                    vb = pi.getViewBox()
+                    break
+            else:
+                return
+        mouse_point = vb.mapSceneToView(pos)
+        x = mouse_point.x()
+        idx = int(np.argmin(np.abs(self._lam - x)))
+        lam_v = self._lam[idx]
+        self._move_crosshair(lam_v)
+
+        parts = [f"\u03bb = {lam_v:.1f} nm"]
+        if self._amp is not None:
+            parts.append(f"|r| = {self._amp[idx]:.4f}")
+        if self._R is not None:
+            parts.append(f"R = {self._R[idx]:.4f}")
+        if self._phi is not None:
+            parts.append(f"\u03c6\u1d63 = {self._phi[idx]:.4f} rad")
+        if self._amp_t is not None:
+            parts.append(f"|t| = {self._amp_t[idx]:.4f}")
+        if self._T_t is not None:
+            parts.append(f"T = {self._T_t[idx]:.4f}")
+        if self._phi_t is not None:
+            parts.append(f"\u03c6\u209c = {self._phi_t[idx]:.4f} rad")
+        self.ui.lbl_hover.setText("   ".join(parts))
+
+    # ------------------------------------------------------------------
+    # Y-scale helpers
+    # ------------------------------------------------------------------
 
     def _apply_yscale(self) -> None:
-        for ax in (self.ax_r, self.ax_R, self.ax_t, self.ax_T):
+        for pi in (self.pi_r, self.pi_R, self.pi_t, self.pi_T):
             if self._log_y:
-                ax.set_yscale("log")
+                pi.setLogMode(False, True)
             else:
-                ax.set_yscale("linear")
+                pi.setLogMode(False, False)
                 if not self._autofit:
-                    ax.set_ylim(0, 1.05)
+                    pi.setYRange(0, 1.05, padding=0)
+        if self._autofit or self._log_y:
+            for pi in self._all_plots():
+                pi.enableAutoRange(axis="y")
 
-    def _all_axes(self):
-        return (self.ax_r, self.ax_R, self.ax_phi, self.ax_t, self.ax_T, self.ax_phi_t)
+    def _na_placeholder(self, pi: pg.PlotItem, msg: str) -> None:
+        ti = pg.TextItem(text=msg, color=TICK_COL, anchor=(0.5, 0.5))
+        pi.addItem(ti)
+        ti.setPos(
+            sum(pi.getAxis("bottom").range) / 2 if pi.getAxis("bottom").range else 700,
+            0.5,
+        )
 
     # ------------------------------------------------------------------
     # Public API
@@ -181,46 +229,40 @@ class PlotPanel(tk.Frame):
         clear: bool = True,
         color: str | None = None,
     ) -> None:
-        """Update all spectra plots."""
-        self._lam = lam
-        self._amp = amp
-        self._R = R
-        self._phi = phi
-        self._amp_t = amp_t
-        self._T_t = T_t
-        self._phi_t = phi_t
-
+        """Plot one spectrum onto all six subplots."""
         col = color if color is not None else PALETTE[color_idx % len(PALETTE)]
+        pen = pg.mkPen(col, width=1.4)
 
         if clear:
-            for ax in self._all_axes():
-                ax.cla()
-            self._style_all()
-            self.ax_r.set_title("Reflection", color=LABEL_COL, fontsize=9, pad=4)
-            self.ax_t.set_title("Transmission", color=LABEL_COL, fontsize=9, pad=4)
+            self._clear_plots()
+
+        # Store for hover / replot
+        self._lam   = lam
+        self._amp   = amp
+        self._R     = R
+        self._phi   = phi
+        self._amp_t = amp_t
+        self._T_t   = T_t
+        self._phi_t = phi_t
 
         phi_plot = np.unwrap(phi) if self._unwrap else phi
 
-        self.ax_r.plot(lam, amp, color=col, lw=1.4, label=label if label else None)
-        self.ax_R.plot(lam, R, color=col, lw=1.4)
-        self.ax_phi.plot(lam, phi_plot, color=col, lw=1.4)
+        kw = dict(pen=pen, name=label) if label and clear else dict(pen=pen)
+        self.pi_r.plot(lam, amp,      **kw)
+        self.pi_R.plot(lam, R,        pen=pen)
+        self.pi_phi.plot(lam, phi_plot, pen=pen)
 
         if amp_t is not None and T_t is not None and phi_t is not None:
             phi_t_plot = np.unwrap(phi_t) if self._unwrap else phi_t
-            self.ax_t.plot(lam, amp_t, color=col, lw=1.4)
-            self.ax_T.plot(lam, T_t, color=col, lw=1.4)
-            self.ax_phi_t.plot(lam, phi_t_plot, color=col, lw=1.4)
+            self.pi_t.plot(lam, amp_t,     pen=pen)
+            self.pi_T.plot(lam, T_t,       pen=pen)
+            self.pi_phi_t.plot(lam, phi_t_plot, pen=pen)
         elif clear:
-            _na_placeholder(self.ax_t, "|t| — N/A")
-            _na_placeholder(self.ax_T, "T — N/A")
-            _na_placeholder(self.ax_phi_t, "φ_t — N/A")
+            self._na_placeholder(self.pi_t,     "|t| \u2014 N/A")
+            self._na_placeholder(self.pi_T,     "T \u2014 N/A")
+            self._na_placeholder(self.pi_phi_t, "\u03c6\u209c \u2014 N/A")
 
-        if label:
-            self.ax_r.legend(
-                fontsize=7, facecolor=AX_BG, labelcolor=LABEL_COL, edgecolor=SPINE_COL
-            )
-
-        self.canvas.draw_idle()
+        self._apply_yscale()
 
     def plot_na_result(
         self,
@@ -231,143 +273,112 @@ class PlotPanel(tk.Frame):
         color_idx: int = 0,
         clear: bool = True,
     ) -> None:
-        """Plot NA-integrated reflectance and transmittance."""
+        """Plot NA-integrated reflectance/transmittance."""
         col = PALETTE[color_idx % len(PALETTE)]
+        pen = pg.mkPen(col, width=1.4)
 
         if clear:
-            for ax in self._all_axes():
-                ax.cla()
-            self._style_all()
-            self.ax_r.set_title("Reflection", color=LABEL_COL, fontsize=9, pad=4)
-            self.ax_t.set_title("Transmission", color=LABEL_COL, fontsize=9, pad=4)
-            _na_placeholder(self.ax_r, "|r| — N/A (NA-integrated)")
-            _na_placeholder(self.ax_phi, "φ_r — N/A (NA-integrated)")
-            _na_placeholder(self.ax_t, "|t| — N/A (NA-integrated)")
-            _na_placeholder(self.ax_phi_t, "φ_t — N/A (NA-integrated)")
+            self._clear_plots()
+            self._na_placeholder(self.pi_r,     "|r| \u2014 N/A (NA-integrated)")
+            self._na_placeholder(self.pi_phi,   "\u03c6\u1d63 \u2014 N/A (NA-integrated)")
+            self._na_placeholder(self.pi_t,     "|t| \u2014 N/A (NA-integrated)")
+            self._na_placeholder(self.pi_phi_t, "\u03c6\u209c \u2014 N/A (NA-integrated)")
 
-        self.ax_R.plot(lam, R_eff, color=col, lw=1.4, label=label if label else None)
-        if not self._log_y and not self._autofit:
-            self.ax_R.set_ylim(0, 1.05)
-
+        kw = dict(pen=pen, name=label) if label and clear else dict(pen=pen)
+        self.pi_R.plot(lam, R_eff, **kw)
         if T_eff is not None:
-            self.ax_T.plot(lam, T_eff, color=col, lw=1.4)
-            if not self._log_y and not self._autofit:
-                self.ax_T.set_ylim(0, 1.05)
-        else:
-            if clear:
-                _na_placeholder(self.ax_T, "T — N/A")
-
-        if label:
-            self.ax_R.legend(
-                fontsize=7, facecolor=AX_BG, labelcolor=LABEL_COL, edgecolor=SPINE_COL
-            )
+            self.pi_T.plot(lam, T_eff, pen=pen)
+        elif clear:
+            self._na_placeholder(self.pi_T, "T \u2014 N/A")
 
         # Store for hover
-        self._lam = lam
-        self._R = R_eff
-        self._amp = np.sqrt(np.clip(R_eff, 0, None))
-        self._phi = np.zeros_like(R_eff)
-        self._T_t = T_eff
+        self._lam   = lam
+        self._R     = R_eff
+        self._amp   = np.sqrt(np.clip(R_eff, 0, None))
+        self._phi   = np.zeros_like(R_eff)
+        self._T_t   = T_eff
         self._amp_t = np.sqrt(np.clip(T_eff, 0, None)) if T_eff is not None else None
         self._phi_t = np.zeros_like(T_eff) if T_eff is not None else None
 
-        self.canvas.draw_idle()
+        self._apply_yscale()
 
     def clear(self) -> None:
-        if self._colorbar is not None:
-            self._colorbar.remove()
-            self._colorbar = None
-        for ax in self._all_axes():
-            ax.cla()
-        self._style_all()
-        self.ax_r.set_title("Reflection", color=LABEL_COL, fontsize=9, pad=4)
-        self.ax_t.set_title("Transmission", color=LABEL_COL, fontsize=9, pad=4)
-        self.canvas.draw_idle()
+        """Clear all plots and remove colorbar if present."""
+        self._remove_colorbar()
+        self._clear_plots()
         self._lam = None
 
-    def set_unwrap(self, unwrap: bool) -> None:
-        self._unwrap = unwrap
+    def _clear_plots(self) -> None:
+        for pi in self._all_plots():
+            pi.clear()
+        # Re-apply style titles (clear() wipes them)
+        self.pi_r.setTitle("Reflection",   color=LABEL_COL)
+        self.pi_t.setTitle("Transmission", color=LABEL_COL)
+        # Restore crosshairs that were removed by clear()
+        self._restore_crosshairs()
+        self._apply_yscale()
+
+    def set_unwrap(self, val: bool) -> None:
+        self._unwrap = val
 
     def set_autofit(self, val: bool) -> None:
         self._autofit = val
+        self._apply_yscale()
 
     def set_log_y(self, val: bool) -> None:
         self._log_y = val
+        self._apply_yscale()
+
+    # ------------------------------------------------------------------
+    # Colorbar for mix-fraction sweeps
+    # ------------------------------------------------------------------
 
     def add_colorbar(
-        self, cmap_name: str, vmin: float, vmax: float, label: str = ""
+        self,
+        cmap_name: str,
+        vmin: float,
+        vmax: float,
+        label: str = "",
     ) -> None:
-        """Add a vertical colorbar to the right of all six subplots."""
-        import matplotlib
-        from matplotlib.colors import Normalize
+        """Add a vertical gradient colorbar in column 2, spanning all rows."""
+        self._remove_colorbar()
 
-        if self._colorbar is not None:
-            self._colorbar.remove()
-            self._colorbar = None
+        glw: pg.GraphicsLayoutWidget = self.ui.glw
 
-        cmap = matplotlib.colormaps.get_cmap(cmap_name)
-        sm = plt.cm.ScalarMappable(cmap=cmap, norm=Normalize(vmin=vmin, vmax=vmax))
-        sm.set_array([])
-        self._colorbar = self.fig.colorbar(
-            sm,
-            ax=list(self._all_axes()),
-            label=label,
-            pad=0.02,
-            fraction=0.02,
-            aspect=30,
-        )
-        self._colorbar.ax.yaxis.label.set_color(LABEL_COL)
-        self._colorbar.ax.tick_params(colors=TICK_COL, labelsize=7)
-        for spine in self._colorbar.ax.spines.values():
-            spine.set_color(SPINE_COL)
-        self.canvas.draw_idle()
+        cb_plot = glw.addPlot(row=0, col=2, rowspan=3)
+        cb_plot.setMaximumWidth(70)
+        cb_plot.hideAxis("bottom")
+        cb_plot.hideAxis("left")
+        cb_plot.getViewBox().setBackgroundColor(AX_BG)
 
-    # ------------------------------------------------------------------
-    # Hover
-    # ------------------------------------------------------------------
+        # Build 1×256 gradient image
+        n = 256
+        gradient = np.linspace(0, 1, n, dtype=np.float32).reshape(1, n)
+        img = pg.ImageItem(gradient)
+        try:
+            cmap = pg.colormap.get(cmap_name, source="matplotlib")
+        except Exception:
+            cmap = pg.colormap.get("plasma", source="matplotlib")
+        img.setColorMap(cmap)
+        cb_plot.addItem(img)
 
-    def _on_hover(self, event) -> None:
-        if self._lam is None or event.inaxes is None:
-            return
-        if event.xdata is None:
-            return
-        idx = int(np.argmin(np.abs(self._lam - event.xdata)))
-        lam_v = self._lam[idx]
-        amp_v = self._amp[idx] if self._amp is not None else float("nan")
-        R_v = self._R[idx] if self._R is not None else float("nan")
-        phi_v = self._phi[idx] if self._phi is not None else float("nan")
+        # Right axis ticks: vmin at bottom (y=0), vmax at top (y=n-1)
+        cb_plot.showAxis("right")
+        ax = cb_plot.getAxis("right")
+        tick_vals = [
+            (0,       f"{vmin:.2f}"),
+            (n // 2,  f"{(vmin + vmax) / 2:.2f}"),
+            (n - 1,   f"{vmax:.2f}"),
+        ]
+        ax.setTicks([tick_vals])
+        ax.setTextPen(pg.mkPen(TICK_COL))
+        ax.setPen(pg.mkPen(SPINE_COL))
+        if label:
+            ax.setLabel(label, color=LABEL_COL)
 
-        msg = (
-            f"λ = {lam_v:.1f} nm   "
-            f"|r| = {amp_v:.4f}   R = {R_v:.4f}   φ_r = {phi_v:.4f} rad"
-        )
+        self._colorbar_plot = cb_plot
 
-        if self._amp_t is not None:
-            amp_t_v = self._amp_t[idx]
-            T_v = self._T_t[idx] if self._T_t is not None else float("nan")
-            phi_t_v = self._phi_t[idx] if self._phi_t is not None else float("nan")
-            msg += f"   |t| = {amp_t_v:.4f}   T = {T_v:.4f}   φ_t = {phi_t_v:.4f} rad"
-
-        self._status_var.set(msg)
-
-        # Vertical crosshair on all axes
-        for vl in self._vlines:
-            try:
-                vl.remove()
-            except Exception:
-                pass
-        self._vlines = []
-        for ax in self._all_axes():
-            vl = ax.axvline(lam_v, color="#ffffff", lw=0.6, alpha=0.4, linestyle=":")
-            self._vlines.append(vl)
-        self.canvas.draw_idle()
-
-    def _on_leave(self, event) -> None:
-        for vl in self._vlines:
-            try:
-                vl.remove()
-            except Exception:
-                pass
-        self._vlines = []
-        self._status_var.set("")
-        self.canvas.draw_idle()
+    def _remove_colorbar(self) -> None:
+        if self._colorbar_plot is not None:
+            self.ui.glw.removeItem(self._colorbar_plot)
+            self._colorbar_plot = None

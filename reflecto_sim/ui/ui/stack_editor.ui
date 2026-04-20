@@ -1,115 +1,183 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <ui version="4.0">
- <class>StackEditor</class>
- <widget class="QWidget" name="StackEditor">
-  <property name="geometry">
-   <rect><x>0</x><y>0</y><width>440</width><height>600</height></rect>
-  </property>
-  <layout class="QVBoxLayout" name="vl_main">
-   <property name="leftMargin"><number>6</number></property>
-   <property name="topMargin"><number>6</number></property>
-   <property name="rightMargin"><number>6</number></property>
-   <property name="bottomMargin"><number>6</number></property>
-   <item>
-    <layout class="QHBoxLayout" name="hl_superstrate">
-     <item>
-      <widget class="QLabel" name="lbl_superstrate">
-       <property name="text"><string>Superstrate:</string></property>
-      </widget>
-     </item>
-     <item>
-      <widget class="QComboBox" name="combo_superstrate">
-       <property name="editable"><bool>false</bool></property>
-       <property name="minimumWidth"><number>120</number></property>
-      </widget>
-     </item>
-     <item>
-      <spacer>
-       <property name="orientation"><enum>Qt::Horizontal</enum></property>
-       <property name="sizeHint" stdset="0">
-        <size><width>40</width><height>20</height></size>
-       </property>
-      </spacer>
-     </item>
-    </layout>
-   </item>
-   <item>
-    <widget class="QLabel" name="lbl_layers">
-     <property name="text"><string>Layers  (top → bottom):</string></property>
+    <class>StackEditor</class>
+    <widget class="QWidget" name="StackEditor">
+        <property name="geometry">
+            <rect>
+                <x>0</x>
+                <y>0</y>
+                <width>300</width>
+                <height>600</height>
+            </rect>
+        </property>
+        <layout class="QVBoxLayout" name="vl_main">
+            <property name="leftMargin">
+                <number>6</number>
+            </property>
+            <property name="topMargin">
+                <number>6</number>
+            </property>
+            <property name="rightMargin">
+                <number>6</number>
+            </property>
+            <property name="bottomMargin">
+                <number>6</number>
+            </property>
+            <item>
+                <layout class="QHBoxLayout" name="hl_superstrate">
+                    <item>
+                        <widget class="QLabel" name="lbl_superstrate">
+                            <property name="text">
+                                <string>Superstrate:</string>
+                            </property>
+                        </widget>
+                    </item>
+                    <item>
+                        <widget class="QComboBox" name="combo_superstrate">
+                            <property name="editable">
+                                <bool>false</bool>
+                            </property>
+                            <property name="minimumWidth">
+                                <number>120</number>
+                            </property>
+                        </widget>
+                    </item>
+                    <item>
+                        <spacer>
+                            <property name="orientation">
+                                <enum>Qt::Horizontal</enum>
+                            </property>
+                            <property name="sizeHint" stdset="0">
+                                <size>
+                                    <width>40</width>
+                                    <height>20</height>
+                                </size>
+                            </property>
+                        </spacer>
+                    </item>
+                </layout>
+            </item>
+            <item>
+                <widget class="QLabel" name="lbl_layers">
+                    <property name="text">
+                        <string>Layers (top → bottom):</string>
+                    </property>
+                </widget>
+            </item>
+            <item>
+                <widget class="QScrollArea" name="scroll_area">
+                    <property name="widgetResizable">
+                        <bool>true</bool>
+                    </property>
+                    <property name="horizontalScrollBarPolicy">
+                        <enum>Qt::ScrollBarAsNeeded</enum>
+                    </property>
+                    <widget class="QWidget" name="layers_container">
+                        <property name="geometry">
+                            <rect>
+                                <x>0</x>
+                                <y>0</y>
+                                <width>420</width>
+                                <height>400</height>
+                            </rect>
+                        </property>
+                        <layout class="QVBoxLayout" name="vl_layers">
+                            <property name="leftMargin">
+                                <number>2</number>
+                            </property>
+                            <property name="topMargin">
+                                <number>2</number>
+                            </property>
+                            <property name="rightMargin">
+                                <number>2</number>
+                            </property>
+                            <property name="bottomMargin">
+                                <number>2</number>
+                            </property>
+                            <item>
+                                <spacer>
+                                    <property name="orientation">
+                                        <enum>Qt::Vertical</enum>
+                                    </property>
+                                    <property name="sizeHint" stdset="0">
+                                        <size>
+                                            <width>20</width>
+                                            <height>40</height>
+                                        </size>
+                                    </property>
+                                </spacer>
+                            </item>
+                        </layout>
+                    </widget>
+                </widget>
+            </item>
+            <item>
+                <layout class="QHBoxLayout" name="hl_buttons">
+                    <item>
+                        <widget class="QPushButton" name="btn_add_layer">
+                            <property name="text">
+                                <string>+ Layer</string>
+                            </property>
+                        </widget>
+                    </item>
+                    <item>
+                        <widget class="QPushButton" name="btn_add_mixed">
+                            <property name="text">
+                                <string>+ Mixed</string>
+                            </property>
+                        </widget>
+                    </item>
+                    <item>
+                        <spacer>
+                            <property name="orientation">
+                                <enum>Qt::Horizontal</enum>
+                            </property>
+                            <property name="sizeHint" stdset="0">
+                                <size>
+                                    <width>40</width>
+                                    <height>20</height>
+                                </size>
+                            </property>
+                        </spacer>
+                    </item>
+                </layout>
+            </item>
+            <item>
+                <layout class="QHBoxLayout" name="hl_substrate">
+                    <item>
+                        <widget class="QLabel" name="lbl_substrate">
+                            <property name="text">
+                                <string>Substrate:</string>
+                            </property>
+                        </widget>
+                    </item>
+                    <item>
+                        <widget class="QComboBox" name="combo_substrate">
+                            <property name="editable">
+                                <bool>false</bool>
+                            </property>
+                            <property name="minimumWidth">
+                                <number>120</number>
+                            </property>
+                        </widget>
+                    </item>
+                    <item>
+                        <spacer>
+                            <property name="orientation">
+                                <enum>Qt::Horizontal</enum>
+                            </property>
+                            <property name="sizeHint" stdset="0">
+                                <size>
+                                    <width>40</width>
+                                    <height>20</height>
+                                </size>
+                            </property>
+                        </spacer>
+                    </item>
+                </layout>
+            </item>
+        </layout>
     </widget>
-   </item>
-   <item>
-    <widget class="QScrollArea" name="scroll_area">
-     <property name="widgetResizable"><bool>true</bool></property>
-     <property name="horizontalScrollBarPolicy"><enum>Qt::ScrollBarAlwaysOff</enum></property>
-     <widget class="QWidget" name="layers_container">
-      <property name="geometry">
-       <rect><x>0</x><y>0</y><width>420</width><height>400</height></rect>
-      </property>
-      <layout class="QVBoxLayout" name="vl_layers">
-       <property name="leftMargin"><number>2</number></property>
-       <property name="topMargin"><number>2</number></property>
-       <property name="rightMargin"><number>2</number></property>
-       <property name="bottomMargin"><number>2</number></property>
-       <item>
-        <spacer>
-         <property name="orientation"><enum>Qt::Vertical</enum></property>
-         <property name="sizeHint" stdset="0">
-          <size><width>20</width><height>40</height></size>
-         </property>
-        </spacer>
-       </item>
-      </layout>
-     </widget>
-    </widget>
-   </item>
-   <item>
-    <layout class="QHBoxLayout" name="hl_buttons">
-     <item>
-      <widget class="QPushButton" name="btn_add_layer">
-       <property name="text"><string>+ Layer</string></property>
-      </widget>
-     </item>
-     <item>
-      <widget class="QPushButton" name="btn_add_mixed">
-       <property name="text"><string>+ Mixed</string></property>
-      </widget>
-     </item>
-     <item>
-      <spacer>
-       <property name="orientation"><enum>Qt::Horizontal</enum></property>
-       <property name="sizeHint" stdset="0">
-        <size><width>40</width><height>20</height></size>
-       </property>
-      </spacer>
-     </item>
-    </layout>
-   </item>
-   <item>
-    <layout class="QHBoxLayout" name="hl_substrate">
-     <item>
-      <widget class="QLabel" name="lbl_substrate">
-       <property name="text"><string>Substrate:</string></property>
-      </widget>
-     </item>
-     <item>
-      <widget class="QComboBox" name="combo_substrate">
-       <property name="editable"><bool>false</bool></property>
-       <property name="minimumWidth"><number>120</number></property>
-      </widget>
-     </item>
-     <item>
-      <spacer>
-       <property name="orientation"><enum>Qt::Horizontal</enum></property>
-       <property name="sizeHint" stdset="0">
-        <size><width>40</width><height>20</height></size>
-       </property>
-      </spacer>
-     </item>
-    </layout>
-   </item>
-  </layout>
- </widget>
- <resources/>
- <connections/>
+    <resources />
+    <connections />
 </ui>

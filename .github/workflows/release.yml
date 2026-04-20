@@ -1,0 +1,90 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact_name: reflecto_sim-windows
+            archive_cmd: "7z a reflecto_sim-windows.zip ./dist/reflecto_sim"
+            asset_name: reflecto_sim-windows.zip
+          - os: ubuntu-latest
+            artifact_name: reflecto_sim-linux
+            archive_cmd: "tar -czf reflecto_sim-linux.tar.gz -C dist reflecto_sim"
+            asset_name: reflecto_sim-linux.tar.gz
+          - os: macos-latest
+            artifact_name: reflecto_sim-macos
+            archive_cmd: "tar -czf reflecto_sim-macos.tar.gz -C dist reflecto_sim"
+            asset_name: reflecto_sim-macos.tar.gz
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build with PyInstaller
+        run: |
+          pyinstaller reflecto_sim.spec
+
+      - name: Archive build (Windows)
+        if: runner.os == 'Windows'
+        run: ${{ matrix.archive_cmd }}
+        shell: cmd
+
+      - name: Archive build (Unix)
+        if: runner.os != 'Windows'
+        run: ${{ matrix.archive_cmd }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.asset_name }}
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Collect release assets
+        run: |
+          mkdir release_assets
+          find artifacts -type f | xargs -I{} cp {} release_assets/
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "reflecto_sim ${{ github.ref_name }}"
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          generate_release_notes: true
+          files: release_assets/*

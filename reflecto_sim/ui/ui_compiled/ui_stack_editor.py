@@ -23,7 +23,7 @@ class Ui_StackEditor(object):
     def setupUi(self, StackEditor):
         if not StackEditor.objectName():
             StackEditor.setObjectName(u"StackEditor")
-        StackEditor.resize(440, 600)
+        StackEditor.resize(300, 600)
         self.vl_main = QVBoxLayout(StackEditor)
         self.vl_main.setObjectName(u"vl_main")
         self.vl_main.setContentsMargins(6, 6, 6, 6)
@@ -56,7 +56,7 @@ class Ui_StackEditor(object):
         self.scroll_area = QScrollArea(StackEditor)
         self.scroll_area.setObjectName(u"scroll_area")
         self.scroll_area.setWidgetResizable(True)
-        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.layers_container = QWidget()
         self.layers_container.setObjectName(u"layers_container")
         self.layers_container.setGeometry(QRect(0, 0, 420, 400))
@@ -119,7 +119,7 @@ class Ui_StackEditor(object):
 
     def retranslateUi(self, StackEditor):
         self.lbl_superstrate.setText(QCoreApplication.translate("StackEditor", u"Superstrate:", None))
-        self.lbl_layers.setText(QCoreApplication.translate("StackEditor", u"Layers  (top \u2192 bottom):", None))
+        self.lbl_layers.setText(QCoreApplication.translate("StackEditor", u"Layers (top \u2192 bottom):", None))
         self.btn_add_layer.setText(QCoreApplication.translate("StackEditor", u"+ Layer", None))
         self.btn_add_mixed.setText(QCoreApplication.translate("StackEditor", u"+ Mixed", None))
         self.lbl_substrate.setText(QCoreApplication.translate("StackEditor", u"Substrate:", None))

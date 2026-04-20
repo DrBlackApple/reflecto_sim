@@ -29,7 +29,12 @@ from ..stack import StackConfig
 from ..tmm import r_to_observables, t_to_observables
 from .compute_worker import ComputeWorker
 from .palette import (
-    AX_BG, BG_DARK, LABEL_COL, PALETTE, SPINE_COL, TICK_COL,
+    AX_BG,
+    BG_DARK,
+    LABEL_COL,
+    PALETTE,
+    SPINE_COL,
+    TICK_COL,
 )
 from .plot_panel import PlotPanel
 from .stack_editor import StackEditor
@@ -51,18 +56,18 @@ class ReflectoApp(QMainWindow):
 
         self.ui = Ui_MainWindow()
         self.ui.setupUi(self)
-        self.setMinimumSize(1200, 640)
+        self.setWindowState(Qt.WindowState.WindowMaximized)
 
         # State
-        self._computing   = False
-        self._last_r:     np.ndarray | None = None
-        self._last_t:     np.ndarray | None = None
-        self._last_lam:   np.ndarray | None = None
+        self._computing = False
+        self._last_r: np.ndarray | None = None
+        self._last_t: np.ndarray | None = None
+        self._last_lam: np.ndarray | None = None
         self._last_N0_arr: np.ndarray | None = None
         self._last_Ns_arr: np.ndarray | None = None
         self._last_R_eff: np.ndarray | None = None
         self._last_T_eff: np.ndarray | None = None
-        self._last_mode:  str = "spectrum"
+        self._last_mode: str = "spectrum"
 
         # Inject custom widgets into .ui containers
         self._build_custom_widgets(list(lib.available()))
@@ -96,17 +101,20 @@ class ReflectoApp(QMainWindow):
     # ------------------------------------------------------------------
 
     def _build_custom_widgets(self, mat_keys: list[str]) -> None:
-        # PlotPanel → centre_container
-        self.plot_panel = PlotPanel()
-        vl_c = QVBoxLayout(self.ui.centre_container)
-        vl_c.setContentsMargins(0, 0, 0, 0)
-        vl_c.addWidget(self.plot_panel)
-
         # StackEditor → left_container (below the title label)
         self.stack_editor = StackEditor()
         self.stack_editor.update_materials(mat_keys)
-        self.ui.left_container.layout().addWidget(self.stack_editor)
+        self.ui.main_splitter.replaceWidget(0, self.stack_editor)
         self.stack_editor.changed.connect(self._schedule_recompute)
+        # PlotPanel → centre_container
+        self.plot_panel = PlotPanel()
+        self.ui.main_splitter.replaceWidget(1, self.plot_panel)
+
+        total = self.ui.main_splitter.width()
+
+        self.ui.main_splitter.setStretchFactor(0, 1)  # gauche  → 1 part
+        self.ui.main_splitter.setStretchFactor(1, 3)  # centre  → 3 parts
+        self.ui.main_splitter.setStretchFactor(2, 1)  # droite  → 1 part
 
     # ------------------------------------------------------------------
     # Signal wiring
@@ -124,9 +132,7 @@ class ReflectoApp(QMainWindow):
 
         # Polarisation
         for rb in (ui.radio_pol_s, ui.radio_pol_p, ui.radio_pol_both):
-            rb.toggled.connect(
-                lambda checked: checked and self._schedule_recompute()
-            )
+            rb.toggled.connect(lambda checked: checked and self._schedule_recompute())
 
         # Display options
         ui.chk_unwrap.toggled.connect(self._on_unwrap_toggle)
@@ -160,10 +166,10 @@ class ReflectoApp(QMainWindow):
         """Validate UI fields and return a params dict, or None on error."""
         ui = self.ui
         try:
-            lam_min  = float(ui.edit_lam_min.text())
-            lam_max  = float(ui.edit_lam_max.text())
+            lam_min = float(ui.edit_lam_min.text())
+            lam_max = float(ui.edit_lam_max.text())
             lam_step = float(ui.edit_lam_step.text())
-            theta    = float(ui.edit_angle.text())
+            theta = float(ui.edit_angle.text())
         except ValueError:
             self._set_status("Invalid parameter values.")
             return None
@@ -184,7 +190,7 @@ class ReflectoApp(QMainWindow):
                 use_na = False
 
         lam_array = np.arange(lam_min, lam_max + lam_step * 0.5, lam_step)
-        config    = self.stack_editor.get_config()
+        config = self.stack_editor.get_config()
 
         if not config.layers:
             self._set_status("Add at least one layer.")
@@ -200,48 +206,49 @@ class ReflectoApp(QMainWindow):
         for i, layer in enumerate(config.layers):
             if layer.sweep_mode == "material" and len(layer.sweep_materials) >= 2:
                 import numpy as _np
+
                 return {
-                    "mode":         "sweep",
-                    "lam_array":    lam_array,
-                    "config":       config,
-                    "layer_index":  i,
-                    "materials":    layer.sweep_materials,
-                    "theta":        theta,
-                    "pol":          pol,
-                    "use_na":       use_na,
-                    "na_val":       na_val,
+                    "mode": "sweep",
+                    "lam_array": lam_array,
+                    "config": config,
+                    "layer_index": i,
+                    "materials": layer.sweep_materials,
+                    "theta": theta,
+                    "pol": pol,
+                    "use_na": use_na,
+                    "na_val": na_val,
                 }
             if layer.sweep_mode == "mix" and layer.sweep_mat_b:
                 return {
-                    "mode":         "mix_sweep",
-                    "lam_array":    lam_array,
-                    "config":       config,
-                    "layer_index":  i,
-                    "mat_a":        layer.material,
-                    "mat_b":        layer.sweep_mat_b,
-                    "model":        layer.sweep_mix_model,
-                    "f_values":     np.linspace(0.0, 1.0, layer.sweep_n_pts).tolist(),
-                    "theta":        theta,
-                    "pol":          pol,
-                    "use_na":       use_na,
-                    "na_val":       na_val,
+                    "mode": "mix_sweep",
+                    "lam_array": lam_array,
+                    "config": config,
+                    "layer_index": i,
+                    "mat_a": layer.material,
+                    "mat_b": layer.sweep_mat_b,
+                    "model": layer.sweep_mix_model,
+                    "f_values": np.linspace(0.0, 1.0, layer.sweep_n_pts).tolist(),
+                    "theta": theta,
+                    "pol": pol,
+                    "use_na": use_na,
+                    "na_val": na_val,
                 }
 
         if use_na:
             return {
-                "mode":      "na",
+                "mode": "na",
                 "lam_array": lam_array,
-                "config":    config,
-                "na_val":    na_val,
-                "pol":       pol,
+                "config": config,
+                "na_val": na_val,
+                "pol": pol,
             }
 
         return {
-            "mode":      "spectrum",
+            "mode": "spectrum",
             "lam_array": lam_array,
-            "config":    config,
-            "theta":     theta,
-            "pol":       pol,
+            "config": config,
+            "theta": theta,
+            "pol": pol,
         }
 
     @Slot()
@@ -278,27 +285,29 @@ class ReflectoApp(QMainWindow):
         self._set_status(msg)
 
     def _handle_spectrum(self, p: dict) -> None:
-        lam   = p["lam"]
-        amp   = p["amp"]
-        R     = p["R"]
-        phi   = p["phi"]
+        lam = p["lam"]
+        amp = p["amp"]
+        R = p["R"]
+        phi = p["phi"]
         amp_t = p["amp_t"]
-        T_t   = p["T_t"]
+        T_t = p["T_t"]
         phi_t = p["phi_t"]
 
-        self._last_r     = p["r"]
-        self._last_t     = p["t"]
-        self._last_lam   = lam
+        self._last_r = p["r"]
+        self._last_t = p["t"]
+        self._last_lam = lam
         self._last_N0_arr = p["N0_arr"]
         self._last_Ns_arr = p["Ns_arr"]
         self._last_R_eff = None
         self._last_T_eff = None
-        self._last_mode  = "spectrum"
+        self._last_mode = "spectrum"
 
         config = self.stack_editor.get_config()
-        label  = " / ".join(lay.name for lay in config.layers)
+        label = " / ".join(lay.name for lay in config.layers)
         self.plot_panel.set_unwrap(self.ui.chk_unwrap.isChecked())
-        self.plot_panel.plot(lam, amp, R, phi, amp_t, T_t, phi_t, label=label, clear=True)
+        self.plot_panel.plot(
+            lam, amp, R, phi, amp_t, T_t, phi_t, label=label, clear=True
+        )
 
         mid = len(lam) // 2
         status = f"Done \u2014 {len(lam)} pts\n@{lam[mid]:.0f}nm: |r|={amp[mid]:.3f} R={R[mid]:.3f}"
@@ -307,18 +316,18 @@ class ReflectoApp(QMainWindow):
         self._set_status(status)
 
     def _handle_na(self, p: dict) -> None:
-        lam           = p["lam"]
-        R_eff         = p["R_eff"]
-        T_eff         = p["T_eff"]
-        na_val        = p["na_val"]
+        lam = p["lam"]
+        R_eff = p["R_eff"]
+        T_eff = p["T_eff"]
+        na_val = p["na_val"]
         theta_max_deg = p["theta_max_deg"]
 
         self._last_R_eff = R_eff
         self._last_T_eff = T_eff
-        self._last_lam   = lam
-        self._last_mode  = "na"
-        self._last_r     = None
-        self._last_t     = None
+        self._last_lam = lam
+        self._last_mode = "na"
+        self._last_r = None
+        self._last_t = None
 
         self.plot_panel.plot_na_result(lam, R_eff, T_eff, label=f"NA={na_val:.2f}")
         self._set_status(
@@ -327,7 +336,7 @@ class ReflectoApp(QMainWindow):
 
     def _handle_sweep(self, p: dict) -> None:
         results = p["results"]
-        errors  = p["errors"]
+        errors = p["errors"]
         if not results:
             self._set_status("Sweep: no valid materials.")
             return
@@ -335,17 +344,28 @@ class ReflectoApp(QMainWindow):
         for i, entry in enumerate(results):
             if entry["is_na"]:
                 self.plot_panel.plot_na_result(
-                    entry["lam"], entry["R"], entry["T_t"],
-                    label=entry["label"], color_idx=i, clear=False,
+                    entry["lam"],
+                    entry["R"],
+                    entry["T_t"],
+                    label=entry["label"],
+                    color_idx=i,
+                    clear=False,
                 )
             else:
                 self.plot_panel.plot(
-                    entry["lam"], entry["amp"], entry["R"], entry["phi"],
-                    entry["amp_t"], entry["T_t"], entry["phi_t"],
-                    label=entry["label"], color_idx=i, clear=False,
+                    entry["lam"],
+                    entry["amp"],
+                    entry["R"],
+                    entry["phi"],
+                    entry["amp_t"],
+                    entry["T_t"],
+                    entry["phi_t"],
+                    label=entry["label"],
+                    color_idx=i,
+                    clear=False,
                 )
-        self._last_r    = None
-        self._last_lam  = results[0]["lam"]
+        self._last_r = None
+        self._last_lam = results[0]["lam"]
         self._last_mode = "sweep"
         msg = f"Sweep: {len(results)} materials"
         if errors:
@@ -354,23 +374,28 @@ class ReflectoApp(QMainWindow):
 
     def _handle_mix_sweep(self, p: dict) -> None:
         results = p["results"]
-        errors  = p["errors"]
-        mat_a   = p["mat_a"]
-        mat_b   = p["mat_b"]
+        errors = p["errors"]
+        mat_a = p["mat_a"]
+        mat_b = p["mat_b"]
         if not results:
             self._set_status("Mix sweep: no valid points.")
             return
 
         import colorsys
+
         try:
             import matplotlib.cm as _cm
+
             cmap = _cm.get_cmap("plasma")
+
             def _col(f: float) -> str:
                 r, g, b, _ = cmap(float(f))
                 return "#{:02x}{:02x}{:02x}".format(
                     int(r * 255), int(g * 255), int(b * 255)
                 )
+
         except Exception:
+
             def _col(f: float) -> str:
                 h = f * 0.8
                 r, g, b = colorsys.hsv_to_rgb(h, 1.0, 1.0)
@@ -383,19 +408,28 @@ class ReflectoApp(QMainWindow):
             col = _col(entry["f"])
             if entry["is_na"]:
                 self.plot_panel.plot_na_result(
-                    entry["lam"], entry["R"], entry["T_t"],
-                    color_idx=0, clear=False,
+                    entry["lam"],
+                    entry["R"],
+                    entry["T_t"],
+                    color_idx=0,
+                    clear=False,
                 )
             else:
                 self.plot_panel.plot(
-                    entry["lam"], entry["amp"], entry["R"], entry["phi"],
-                    entry["amp_t"], entry["T_t"], entry["phi_t"],
-                    color=col, clear=False,
+                    entry["lam"],
+                    entry["amp"],
+                    entry["R"],
+                    entry["phi"],
+                    entry["amp_t"],
+                    entry["T_t"],
+                    entry["phi_t"],
+                    color=col,
+                    clear=False,
                 )
         self.plot_panel.add_colorbar("plasma", 0.0, 1.0, f"f  ({mat_a} \u2192 {mat_b})")
 
-        self._last_r    = None
-        self._last_lam  = results[0]["lam"]
+        self._last_r = None
+        self._last_lam = results[0]["lam"]
         self._last_mode = "sweep"
         msg = f"Mix sweep: {len(results)} pts  {mat_a} -> {mat_b}"
         if errors:
@@ -424,7 +458,7 @@ class ReflectoApp(QMainWindow):
     def _replot_last(self) -> None:
         if self._last_r is None:
             return
-        pol   = self._current_pol()
+        pol = self._current_pol()
         angle = self._current_angle()
         amp, R, phi = r_to_observables(self._last_r)
         amp_t, T_t, phi_t = (None, None, None)
@@ -433,11 +467,18 @@ class ReflectoApp(QMainWindow):
                 self._last_t, self._last_N0_arr, self._last_Ns_arr, angle, pol
             )
         config = self.stack_editor.get_config()
-        label  = " / ".join(lay.name for lay in config.layers)
+        label = " / ".join(lay.name for lay in config.layers)
         self.plot_panel.set_unwrap(self.ui.chk_unwrap.isChecked())
         self.plot_panel.plot(
-            self._last_lam, amp, R, phi, amp_t, T_t, phi_t,
-            label=label, clear=True,
+            self._last_lam,
+            amp,
+            R,
+            phi,
+            amp_t,
+            T_t,
+            phi_t,
+            label=label,
+            clear=True,
         )
 
     @Slot(bool)
@@ -489,9 +530,7 @@ class ReflectoApp(QMainWindow):
 
     @Slot()
     def _save_stack(self) -> None:
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Save stack", "", "JSON (*.json)"
-        )
+        path, _ = QFileDialog.getSaveFileName(self, "Save stack", "", "JSON (*.json)")
         if not path:
             return
         try:
@@ -504,9 +543,7 @@ class ReflectoApp(QMainWindow):
         if self._last_r is None and self._last_R_eff is None:
             QMessageBox.information(self, "Export", "Compute a spectrum first.")
             return
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Save CSV", "", "CSV (*.csv)"
-        )
+        path, _ = QFileDialog.getSaveFileName(self, "Save CSV", "", "CSV (*.csv)")
         if not path:
             return
         with open(path, "w", newline="") as f:
@@ -521,14 +558,16 @@ class ReflectoApp(QMainWindow):
                     for row in zip(self._last_lam, self._last_R_eff):
                         w.writerow([f"{v:.6g}" for v in row])
             else:
-                pol   = self._current_pol()
+                pol = self._current_pol()
                 angle = self._current_angle()
                 amp, R, phi = r_to_observables(self._last_r)
                 if self._last_t is not None:
                     amp_t, T_t, phi_t = t_to_observables(
                         self._last_t, self._last_N0_arr, self._last_Ns_arr, angle, pol
                     )
-                    w.writerow(["lambda_nm", "|r|", "R", "phi_r_rad", "|t|", "T", "phi_t_rad"])
+                    w.writerow(
+                        ["lambda_nm", "|r|", "R", "phi_r_rad", "|t|", "T", "phi_t_rad"]
+                    )
                     for row in zip(self._last_lam, amp, R, phi, amp_t, T_t, phi_t):
                         w.writerow([f"{v:.6g}" for v in row])
                 else:
@@ -542,9 +581,7 @@ class ReflectoApp(QMainWindow):
         if self._last_r is None and self._last_R_eff is None:
             QMessageBox.information(self, "Export", "Compute a spectrum first.")
             return
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Save PNG", "", "PNG (*.png)"
-        )
+        path, _ = QFileDialog.getSaveFileName(self, "Save PNG", "", "PNG (*.png)")
         if not path:
             return
         try:
@@ -556,12 +593,14 @@ class ReflectoApp(QMainWindow):
     def _render_png(self, path: str) -> None:
         """Render the current result to a matplotlib figure and save as PNG."""
         import matplotlib
+
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
 
         fig, axes = plt.subplots(3, 2, figsize=(11, 7), facecolor=BG_DARK)
-        fig.subplots_adjust(hspace=0.06, wspace=0.32,
-                            left=0.08, right=0.97, top=0.93, bottom=0.08)
+        fig.subplots_adjust(
+            hspace=0.06, wspace=0.32, left=0.08, right=0.97, top=0.93, bottom=0.08
+        )
 
         def _style(ax, ylabel, xlabel="", bottom=False):
             ax.set_facecolor(AX_BG)
@@ -578,18 +617,18 @@ class ReflectoApp(QMainWindow):
                 spine.set_color(SPINE_COL)
                 spine.set_linewidth(0.8)
 
-        ax_r,  ax_t   = axes[0]
-        ax_R,  ax_T   = axes[1]
+        ax_r, ax_t = axes[0]
+        ax_R, ax_T = axes[1]
         ax_phi, ax_phi_t = axes[2]
 
-        _style(ax_r,   "|r|")
-        _style(ax_t,   "|t|")
-        _style(ax_R,   "R = |r|\u00b2")
-        _style(ax_T,   "T")
-        _style(ax_phi,   "\u03c6\u1d63 (rad)", xlabel="Wavelength (nm)", bottom=True)
+        _style(ax_r, "|r|")
+        _style(ax_t, "|t|")
+        _style(ax_R, "R = |r|\u00b2")
+        _style(ax_T, "T")
+        _style(ax_phi, "\u03c6\u1d63 (rad)", xlabel="Wavelength (nm)", bottom=True)
         _style(ax_phi_t, "\u03c6\u209c (rad)", xlabel="Wavelength (nm)", bottom=True)
 
-        ax_r.set_title("Reflection",   color=LABEL_COL, fontsize=9, pad=4)
+        ax_r.set_title("Reflection", color=LABEL_COL, fontsize=9, pad=4)
         ax_t.set_title("Transmission", color=LABEL_COL, fontsize=9, pad=4)
 
         lam = self._last_lam
@@ -600,31 +639,41 @@ class ReflectoApp(QMainWindow):
             if self._last_T_eff is not None:
                 ax_T.plot(lam, self._last_T_eff, color=col, lw=1.4)
             for ax, msg in [
-                (ax_r,     "|r| \u2014 N/A"),
-                (ax_phi,   "\u03c6\u1d63 \u2014 N/A"),
-                (ax_t,     "|t| \u2014 N/A"),
+                (ax_r, "|r| \u2014 N/A"),
+                (ax_phi, "\u03c6\u1d63 \u2014 N/A"),
+                (ax_t, "|t| \u2014 N/A"),
                 (ax_phi_t, "\u03c6\u209c \u2014 N/A"),
             ]:
-                ax.text(0.5, 0.5, msg, transform=ax.transAxes,
-                        ha="center", va="center", color=TICK_COL,
-                        fontsize=8, style="italic")
+                ax.text(
+                    0.5,
+                    0.5,
+                    msg,
+                    transform=ax.transAxes,
+                    ha="center",
+                    va="center",
+                    color=TICK_COL,
+                    fontsize=8,
+                    style="italic",
+                )
         elif self._last_r is not None:
-            pol   = self._current_pol()
+            pol = self._current_pol()
             angle = self._current_angle()
             amp, R, phi = r_to_observables(self._last_r)
             phi_plot = np.unwrap(phi) if self.ui.chk_unwrap.isChecked() else phi
 
             ax_r.plot(lam, amp, color=col, lw=1.4)
-            ax_R.plot(lam, R,   color=col, lw=1.4)
+            ax_R.plot(lam, R, color=col, lw=1.4)
             ax_phi.plot(lam, phi_plot, color=col, lw=1.4)
 
             if self._last_t is not None:
                 amp_t, T_t, phi_t = t_to_observables(
                     self._last_t, self._last_N0_arr, self._last_Ns_arr, angle, pol
                 )
-                phi_t_plot = np.unwrap(phi_t) if self.ui.chk_unwrap.isChecked() else phi_t
-                ax_t.plot(lam, amp_t,       color=col, lw=1.4)
-                ax_T.plot(lam, T_t,         color=col, lw=1.4)
+                phi_t_plot = (
+                    np.unwrap(phi_t) if self.ui.chk_unwrap.isChecked() else phi_t
+                )
+                ax_t.plot(lam, amp_t, color=col, lw=1.4)
+                ax_T.plot(lam, T_t, color=col, lw=1.4)
                 ax_phi_t.plot(lam, phi_t_plot, color=col, lw=1.4)
 
         fig.savefig(path, dpi=300, facecolor=BG_DARK)

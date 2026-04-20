@@ -1,0 +1,39 @@
+[project]
+name = "reflecto-sim"
+version = "0.1.0"
+description = "Transfer Matrix Method optical reflectometry simulator"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Johan Herlent" }]
+license = { text = "MIT" }
+keywords = ["optics", "thin-film", "reflectometry", "TMM", "photonics"]
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.11",
+    "matplotlib>=3.7",
+    "numba>=0.58",
+    "PySide6>=6.6",
+    "pyqtgraph>=0.13",
+]
+
+[project.scripts]
+reflecto-sim = "main:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4",
+    "pytest-qt>=4.2",
+    "pyinstaller>=6.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"
+# Qt tests require a display; mark them so they can be skipped in headless CI
+markers = [
+    "gui: tests that require a running Qt application",
+]
+
+[tool.pyinstaller]
+# Informational — actual spec is reflecto_sim.spec
+entrypoint = "main.py"

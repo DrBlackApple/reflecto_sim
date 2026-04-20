@@ -1,5 +1,8 @@
 # reflecto_sim
 
+[![Tests](https://github.com/DrBlackApple/reflecto_sim/actions/workflows/test.yml/badge.svg)](https://github.com/DrBlackApple/reflecto_sim/actions/workflows/test.yml)
+[![Release](https://github.com/DrBlackApple/reflecto_sim/actions/workflows/release.yml/badge.svg)](https://github.com/DrBlackApple/reflecto_sim/releases)
+
 A Transfer Matrix Method (TMM) optical reflectometry simulator for multilayer thin-film stacks. Computes complex reflectance spectra (amplitude, reflectance, phase) as a function of wavelength, angle of incidence, and polarization.
 
 ## Features
@@ -9,7 +12,7 @@ A Transfer Matrix Method (TMM) optical reflectometry simulator for multilayer th
 - **Effective medium mixing** — Bruggeman, Maxwell-Garnett, and linear mixing for composite layers
 - **NA-integrated reflectance** — Gauss-Legendre weighted cone integration for finite numerical apertures
 - **Numba JIT compilation** — near-C performance with transparent Python fallback
-- **Interactive GUI** — dark-themed Tkinter application with live matplotlib plots (|r|, R, φ)
+- **Interactive GUI** — dark-themed PySide6 + pyqtgraph application with 6 live subplots (|r|, |t|, R, T, φᵣ, φₜ)
 - **Parameter sweeps** — vary material composition or material identity across a layer
 - **JSON stack persistence** — save and reload optical stack configurations
 
@@ -19,7 +22,7 @@ A Transfer Matrix Method (TMM) optical reflectometry simulator for multilayer th
 pip install -r requirements.txt
 ```
 
-Dependencies: `numpy`, `scipy`, `matplotlib`, `numba` (optional but recommended).
+Dependencies: `numpy`, `scipy`, `matplotlib`, `PySide6`, `pyqtgraph`, `numba` (optional but recommended).
 
 ## Usage
 
@@ -67,19 +70,35 @@ amp, R, phase = r_to_observables(r)
 
 ```
 reflecto_sim/
-├── main.py                  # Entry point
+├── main.py                      # Entry point (QApplication + dark palette)
 ├── requirements.txt
-├── materials/               # Optical data (.txt tabulated, .json analytical)
+├── reflecto_sim.spec            # PyInstaller build spec
+├── materials/                   # Optical data (.txt tabulated, .json analytical)
 └── reflecto_sim/
-    ├── tmm.py               # TMM physics kernel (Numba JIT)
-    ├── materials.py         # Material library and dispersion models
-    ├── stack.py             # Stack/layer definitions and resolution
-    ├── eff_medium.py        # Effective medium mixing models
+    ├── tmm.py                   # TMM physics kernel (Numba JIT)
+    ├── materials.py             # Material library and dispersion models
+    ├── stack.py                 # Stack/layer definitions and resolution
+    ├── eff_medium.py            # Effective medium mixing models
     └── ui/
-        ├── app.py           # Main application window
-        ├── stack_editor.py  # Layer editor widget
-        └── plot_panel.py    # Matplotlib plot panel
+        ├── app.py               # ReflectoApp(QMainWindow)
+        ├── stack_editor.py      # StackEditor + LayerRowWidget + dialogs
+        ├── plot_panel.py        # PlotPanel — 6 pyqtgraph subplots
+        ├── compute_worker.py    # ComputeWorker(QObject) — background thread
+        ├── palette.py           # Shared colour constants
+        ├── ui/                  # Qt Designer .ui files (source of truth)
+        └── ui_compiled/         # pyside6-uic generated (do not edit)
 ```
+
+## Packaging (standalone executable)
+
+```bash
+pip install pyinstaller
+pyinstaller reflecto_sim.spec
+# Output: dist/reflecto_sim/reflecto_sim.exe  (Windows)
+#         dist/reflecto_sim/reflecto_sim       (Linux/macOS)
+```
+
+Pre-built binaries for Windows, Linux, and macOS are attached to each [GitHub Release](https://github.com/DrBlackApple/reflecto_sim/releases).
 
 ## How to Cite
 

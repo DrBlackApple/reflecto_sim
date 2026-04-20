@@ -6,8 +6,14 @@ import sys
 from pathlib import Path
 
 import pyqtgraph as pg
-from PySide6.QtGui import QColor, QPalette
+from PySide6.QtGui import QColor, QIcon, QPalette
 from PySide6.QtWidgets import QApplication
+
+
+def _asset_path(relative: str) -> Path:
+    """Resolve an asset path for both dev and PyInstaller contexts."""
+    base = Path(getattr(sys, "_MEIPASS", Path(__file__).parent))
+    return base / relative
 
 from reflecto_sim.materials import MaterialLibrary
 from reflecto_sim.ui.app import ReflectoApp
@@ -161,6 +167,9 @@ def main() -> None:
 
     app = QApplication(sys.argv)
     app.setApplicationName("reflecto_sim")
+    icon_path = _asset_path("assets/icon.png")
+    if icon_path.exists():
+        app.setWindowIcon(QIcon(str(icon_path)))
     _apply_dark_palette(app)
 
     lib = MaterialLibrary()

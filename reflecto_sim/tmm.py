@@ -13,7 +13,7 @@ import numpy as np
 
 try:
     import numba
-    from numba import njit, complex128, float64, int8
+    from numba import njit, prange, complex128, float64, int8
 
     _NUMBA_AVAILABLE = True
 except ImportError:
@@ -25,14 +25,14 @@ except ImportError:
 # ---------------------------------------------------------------------------
 
 
-def _make_kernel():
-    """Return a JIT-compiled or pure-Python TMM kernel."""
+def _make_kernels():
+    """Return JIT-compiled or pure-Python TMM kernels (single + batch)."""
 
     if _NUMBA_AVAILABLE:
 
         @njit(cache=True)
-        def _kernel(N_layers, d_layers, lam_nm, theta_rad, N0, Ns, pol):
-            """Compute complex reflection coefficient r for one wavelength.
+        def _single(N_layers, d_layers, lam_nm, theta_rad, N0, Ns, pol):
+            """Compute (r, t) for one wavelength.
 
             Parameters
             ----------
@@ -43,6 +43,10 @@ def _make_kernel():
             N0       : complex128             superstrate N
             Ns       : complex128             substrate N
             pol      : int8                   0 = s/TE, 1 = p/TM
+
+            Returns
+            -------
+            (r, t) : complex reflection and transmission coefficients
             """
             TWO_PI = 6.283185307179586
             k0 = TWO_PI / lam_nm
@@ -92,20 +96,34 @@ def _make_kernel():
                 n11 = M10 * L01 + M11 * L11
                 M00, M01, M10, M11 = n00, n01, n10, n11
 
-            # reflection coefficient
-            num = M00 * eta0 + M01 * eta0 * etas - M10 - M11 * etas
+            # Reflection and transmission coefficients
             den = M00 * eta0 + M01 * eta0 * etas + M10 + M11 * etas
-            return num / den
+            num_r = M00 * eta0 + M01 * eta0 * etas - M10 - M11 * etas
+            r = num_r / den
+            t = (2.0 * eta0) / den
+            return r, t
 
-        return _kernel
+        @njit(cache=True, parallel=True)
+        def _batch(N_mat, d_arr, lam_array, theta_rad, N0_arr, Ns_arr, pol):
+            """Compute (r, t) arrays for all wavelengths in parallel."""
+            n = len(lam_array)
+            r_out = np.empty(n, dtype=np.complex128)
+            t_out = np.empty(n, dtype=np.complex128)
+            for i in prange(n):
+                r_out[i], t_out[i] = _single(
+                    N_mat[:, i], d_arr, lam_array[i], theta_rad,
+                    N0_arr[i], Ns_arr[i], pol
+                )
+            return r_out, t_out
+
+        return _single, _batch
 
     else:
-        # Pure-Python fallback (no Numba) — admittances match the JIT version
-        def _kernel(N_layers, d_layers, lam_nm, theta_rad, N0, Ns, pol):
+        # Pure-Python fallback (no Numba)
+        def _single(N_layers, d_layers, lam_nm, theta_rad, N0, Ns, pol):
             TWO_PI = 2.0 * math.pi
             k0 = TWO_PI / lam_nm
             sin_t = cmath.sin(complex(theta_rad))
-            # kz0/kzs are dimensionless (= N*cos θ); no k0 factor here
             kz0 = cmath.sqrt(N0**2 - (N0 * sin_t) ** 2)
             kzs = cmath.sqrt(Ns**2 - (N0 * sin_t) ** 2)
 
@@ -121,7 +139,6 @@ def _make_kernel():
                 dj = d_layers[j]
                 kzj = k0 * cmath.sqrt(Nj**2 - (N0 * sin_t) ** 2)
                 delta = kzj * dj
-                # admittance for layer: divide by k0 to stay dimensionless
                 if pol == 0:
                     eta_j = kzj / k0
                 else:
@@ -131,14 +148,27 @@ def _make_kernel():
                 L = np.array([[c, -1j * s / eta_j], [-1j * eta_j * s, c]])
                 M = M @ L
 
-            num = M[0, 0] * eta0 + M[0, 1] * eta0 * etas - M[1, 0] - M[1, 1] * etas
             den = M[0, 0] * eta0 + M[0, 1] * eta0 * etas + M[1, 0] + M[1, 1] * etas
-            return num / den
+            num_r = M[0, 0] * eta0 + M[0, 1] * eta0 * etas - M[1, 0] - M[1, 1] * etas
+            r = num_r / den
+            t = (2.0 * eta0) / den
+            return r, t
 
-        return _kernel
+        def _batch(N_mat, d_arr, lam_array, theta_rad, N0_arr, Ns_arr, pol):
+            n = len(lam_array)
+            r_out = np.empty(n, dtype=np.complex128)
+            t_out = np.empty(n, dtype=np.complex128)
+            for i in range(n):
+                r_out[i], t_out[i] = _single(
+                    N_mat[:, i], d_arr, lam_array[i], theta_rad,
+                    N0_arr[i], Ns_arr[i], pol
+                )
+            return r_out, t_out
+
+        return _single, _batch
 
 
-_tmm_kernel = _make_kernel()
+_tmm_single, _tmm_batch = _make_kernels()
 
 
 # ---------------------------------------------------------------------------
@@ -154,8 +184,8 @@ def compute_spectrum(
     Ns_arr: np.ndarray,  # shape (n_lam,), complex128, substrate
     theta_deg: float = 0.0,
     pol: str = "s",
-) -> np.ndarray:
-    """Compute complex reflection coefficient r across a wavelength array.
+) -> tuple[np.ndarray, np.ndarray]:
+    """Compute complex reflection and transmission coefficients across wavelengths.
 
     Parameters
     ----------
@@ -169,25 +199,11 @@ def compute_spectrum(
 
     Returns
     -------
-    r : complex128 array, shape (n_lam,)
+    (r, t) : complex128 arrays, shape (n_lam,)
     """
     theta_rad = math.radians(theta_deg)
     pol_int = np.int8(0) if pol.lower() == "s" else np.int8(1)
-
-    n_lam = len(lam_array)
-    r = np.empty(n_lam, dtype=np.complex128)
-
-    for i in range(n_lam):
-        r[i] = _tmm_kernel(
-            N_mat[:, i],
-            d_arr,
-            lam_array[i],
-            theta_rad,
-            N0_arr[i],
-            Ns_arr[i],
-            pol_int,
-        )
-    return r
+    return _tmm_batch(N_mat, d_arr, lam_array, theta_rad, N0_arr, Ns_arr, pol_int)
 
 
 def r_to_observables(r: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -196,6 +212,43 @@ def r_to_observables(r: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]
     R = amp**2
     phase = np.angle(r)
     return amp, R, phase
+
+
+def t_to_observables(
+    t: np.ndarray,
+    N0_arr: np.ndarray,
+    Ns_arr: np.ndarray,
+    theta_deg: float,
+    pol: str,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Decompose t into (|t|, T, phase_rad).
+
+    Transmittance T = |t|² × Re(η_s) / Re(η_0), using the admittance
+    convention of the TMM kernel (handles both TE and TM correctly).
+
+    Parameters
+    ----------
+    t        : complex transmission coefficient array, shape (n_lam,)
+    N0_arr   : superstrate N per wavelength
+    Ns_arr   : substrate N per wavelength
+    theta_deg: angle of incidence in degrees
+    pol      : 's' (TE) or 'p' (TM); 'both' treated as 's'
+    """
+    sin_t = math.sin(math.radians(theta_deg))
+    # kz components (complex) — dimensionless (= N·cos θ in medium)
+    kz0 = np.sqrt(N0_arr**2 - (N0_arr * sin_t) ** 2)
+    kzs = np.sqrt(Ns_arr**2 - (N0_arr * sin_t) ** 2)
+
+    pol_lower = pol.lower()
+    if pol_lower in ("s", "both"):
+        eta0 = kz0
+        etas = kzs
+    else:  # p / TM
+        eta0 = N0_arr**2 / kz0
+        etas = Ns_arr**2 / kzs
+
+    T = np.abs(t) ** 2 * np.real(etas) / np.real(eta0)
+    return np.abs(t), T, np.angle(t)
 
 
 def compute_na_spectrum(
@@ -207,11 +260,11 @@ def compute_na_spectrum(
     na: float,
     pol: str = "both",
     n_quad: int = 20,
-) -> np.ndarray:
-    """Compute NA-integrated effective reflectance R_eff(λ).
+) -> tuple[np.ndarray, np.ndarray]:
+    """Compute NA-integrated effective reflectance and transmittance.
 
-    Integrates R(θ,λ) over a cone of illumination angles [0, θ_max] where
-    θ_max = arcsin(NA / n0), weighted by sin(θ)cos(θ) (intensity-correct).
+    Integrates R(θ,λ) and T(θ,λ) over a cone of illumination angles
+    [0, θ_max] where θ_max = arcsin(NA / n0), weighted by sin(θ)cos(θ).
 
     Parameters
     ----------
@@ -221,7 +274,7 @@ def compute_na_spectrum(
 
     Returns
     -------
-    R_eff : real array, shape (n_lam,)
+    (R_eff, T_eff) : real arrays, shape (n_lam,)
     """
     n0_ref = N0_arr[len(N0_arr) // 2].real
     sin_max = na / n0_ref
@@ -234,22 +287,29 @@ def compute_na_spectrum(
     w_scaled = weights * 0.5 * theta_max
 
     R_accum = np.zeros(len(lam_array))
+    T_accum = np.zeros(len(lam_array))
     W_accum = 0.0
 
     for theta_i, w_i in zip(theta_pts, w_scaled):
         factor = math.sin(theta_i) * math.cos(theta_i) * w_i
         deg = math.degrees(theta_i)
         if pol.lower() in ("s", "p"):
-            r = compute_spectrum(N_mat, d_arr, lam_array, N0_arr, Ns_arr, deg, pol)
-            R_i = np.abs(r) ** 2
+            r_i, t_i = compute_spectrum(N_mat, d_arr, lam_array, N0_arr, Ns_arr, deg, pol)
+            R_i = np.abs(r_i) ** 2
+            T_i = t_to_observables(t_i, N0_arr, Ns_arr, deg, pol)[1]
         else:  # unpolarized
-            rs = compute_spectrum(N_mat, d_arr, lam_array, N0_arr, Ns_arr, deg, "s")
-            rp = compute_spectrum(N_mat, d_arr, lam_array, N0_arr, Ns_arr, deg, "p")
-            R_i = 0.5 * (np.abs(rs) ** 2 + np.abs(rp) ** 2)
+            r_s, t_s = compute_spectrum(N_mat, d_arr, lam_array, N0_arr, Ns_arr, deg, "s")
+            r_p, t_p = compute_spectrum(N_mat, d_arr, lam_array, N0_arr, Ns_arr, deg, "p")
+            R_i = 0.5 * (np.abs(r_s) ** 2 + np.abs(r_p) ** 2)
+            T_i = 0.5 * (
+                t_to_observables(t_s, N0_arr, Ns_arr, deg, "s")[1]
+                + t_to_observables(t_p, N0_arr, Ns_arr, deg, "p")[1]
+            )
         R_accum += factor * R_i
+        T_accum += factor * T_i
         W_accum += factor
 
-    return R_accum / W_accum
+    return R_accum / W_accum, T_accum / W_accum
 
 
 def warm_up_jit() -> None:

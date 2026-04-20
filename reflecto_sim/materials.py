@@ -111,13 +111,13 @@ def _analytical_graphene2d(lam_nm: np.ndarray, params: dict) -> np.ndarray:
     """
     from scipy.constants import e, hbar, k as kB, epsilon_0, c, pi
 
-    mu_c = params.get("mu_c_eV", 0.0) * e        # J
-    tau  = params.get("tau_fs", 100.0) * 1e-15    # s
-    T    = params.get("T_K", 300.0)               # K
-    d    = params.get("d_nm", 0.335) * 1e-9       # m
+    mu_c = params.get("mu_c_eV", 0.0) * e  # J
+    tau = params.get("tau_fs", 100.0) * 1e-15  # s
+    T = params.get("T_K", 300.0)  # K
+    d = params.get("d_nm", 0.335) * 1e-9  # m
 
-    omega = 2.0 * pi * c / (lam_nm * 1e-9)       # rad/s
-    kBT   = kB * T
+    omega = 2.0 * pi * c / (lam_nm * 1e-9)  # rad/s
+    kBT = kB * T
 
     # Terme intraband (Kubo, forme fermée)
     intra_factor = (mu_c / kBT) + 2.0 * np.log(np.exp(-mu_c / kBT) + 1.0)
@@ -125,17 +125,15 @@ def _analytical_graphene2d(lam_nm: np.ndarray, params: dict) -> np.ndarray:
 
     # Terme interband (approximation analytique de Hanson/Falkovsky)
     hw = hbar * omega
-    arg_re  = (hw - 2.0 * mu_c) / (2.0 * kBT)
+    arg_re = (hw - 2.0 * mu_c) / (2.0 * kBT)
     num_log = (hw + 2.0 * mu_c) ** 2 + (2.0 * kBT) ** 2
     den_log = (hw - 2.0 * mu_c) ** 2 + (2.0 * kBT) ** 2
     sigma_inter = (e**2 / (4.0 * hbar)) * (
-        0.5
-        + np.arctan(arg_re) / pi
-        - 1j / (2.0 * pi) * np.log(num_log / den_log)
+        0.5 + np.arctan(arg_re) / pi - 1j / (2.0 * pi) * np.log(num_log / den_log)
     )
 
-    sigma_s  = sigma_intra + sigma_inter          # S (conductivité de surface)
-    eps_eff  = 1.0 + 1j * sigma_s / (epsilon_0 * omega * d)
+    sigma_s = sigma_intra + sigma_inter  # S (conductivité de surface)
+    eps_eff = 1.0 + 1j * sigma_s / (epsilon_0 * omega * d)
     return _eps_to_N(eps_eff)
 
 
@@ -203,6 +201,7 @@ _SEMI_INFINITE: dict[str, complex] = {
     "glass": 1.52 + 0j,
     "sio2": 1.46 + 0j,
     "bk7": 1.52 + 0j,
+    "al2o3": 1.75 + 0j,
 }
 
 

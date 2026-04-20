@@ -48,37 +48,63 @@ def _style_ax(ax, ylabel: str, xlabel: str = "", bottom: bool = False) -> None:
         spine.set_linewidth(0.8)
 
 
+def _na_placeholder(ax, msg: str) -> None:
+    ax.text(
+        0.5,
+        0.5,
+        msg,
+        transform=ax.transAxes,
+        ha="center",
+        va="center",
+        color=TICK_COL,
+        fontsize=8,
+        style="italic",
+    )
+
+
 class PlotPanel(tk.Frame):
-    """Three-subplot panel: |r|(λ), R(λ), φ(λ) with hover crosshair."""
+    """Six-subplot panel: reflection (|r|, R, φ_r) and transmission (|t|, T, φ_t)."""
 
     def __init__(self, parent, **kw):
         super().__init__(parent, bg=BG_DARK, **kw)
 
-        self.fig = Figure(figsize=(6, 7), facecolor=BG_DARK, tight_layout=True)
+        self._lam: np.ndarray | None = None
+        self._amp: np.ndarray | None = None
+        self._R: np.ndarray | None = None
+        self._phi: np.ndarray | None = None
+        self._amp_t: np.ndarray | None = None
+        self._T_t: np.ndarray | None = None
+        self._phi_t: np.ndarray | None = None
+        self._unwrap = False
+        self._autofit = False
+        self._log_y = False
+        self._colorbar = None
+
+        self.fig = Figure(figsize=(11, 7), facecolor=BG_DARK)
         self.fig.subplots_adjust(
-            hspace=0.06, left=0.12, right=0.97, top=0.96, bottom=0.08
+            hspace=0.06, wspace=0.32, left=0.08, right=0.97, top=0.93, bottom=0.08
         )
 
-        self.ax_r = self.fig.add_subplot(3, 1, 1)
-        self.ax_R = self.fig.add_subplot(3, 1, 2)
-        self.ax_phi = self.fig.add_subplot(3, 1, 3)
+        # Left column — reflection
+        self.ax_r = self.fig.add_subplot(3, 2, 1)
+        self.ax_R = self.fig.add_subplot(3, 2, 3, sharex=self.ax_r)
+        self.ax_phi = self.fig.add_subplot(3, 2, 5, sharex=self.ax_r)
 
-        _style_ax(self.ax_r, r"|r|", bottom=False)
-        _style_ax(self.ax_R, r"R = |r|²", bottom=False)
-        _style_ax(self.ax_phi, r"φ (rad)", xlabel="Wavelength (nm)", bottom=True)
+        # Right column — transmission
+        self.ax_t = self.fig.add_subplot(3, 2, 2, sharex=self.ax_r)
+        self.ax_T = self.fig.add_subplot(3, 2, 4, sharex=self.ax_r)
+        self.ax_phi_t = self.fig.add_subplot(3, 2, 6, sharex=self.ax_r)
 
-        self.ax_r.set_ylim(0, 1.05)
-        self.ax_R.set_ylim(0, 1.05)
+        self._style_all()
 
-        # Title
-        self.fig.suptitle(
-            "Reflectometry spectrum", color=LABEL_COL, fontsize=10, y=0.99
-        )
+        # Column headers
+        self.ax_r.set_title("Reflection", color=LABEL_COL, fontsize=9, pad=4)
+        self.ax_t.set_title("Transmission", color=LABEL_COL, fontsize=9, pad=4)
 
         self.canvas = FigureCanvasTkAgg(self.fig, master=self)
         self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
-        # Minimal toolbar (save button, zoom)
+        # Toolbar
         toolbar_frame = tk.Frame(self, bg=BG_DARK)
         toolbar_frame.pack(fill=tk.X, side=tk.BOTTOM)
         self.toolbar = NavigationToolbar2Tk(self.canvas, toolbar_frame)
@@ -92,7 +118,6 @@ class PlotPanel(tk.Frame):
 
         # Hover annotations
         self._vlines = []
-        self._hover_labels: list[tk.Label] = []
         self._status_var = tk.StringVar(value="")
         status_bar = tk.Label(
             self,
@@ -107,14 +132,36 @@ class PlotPanel(tk.Frame):
         self.canvas.mpl_connect("motion_notify_event", self._on_hover)
         self.canvas.mpl_connect("axes_leave_event", self._on_leave)
 
-        self._lam: np.ndarray | None = None
-        self._amp: np.ndarray | None = None
-        self._R: np.ndarray | None = None
-        self._phi: np.ndarray | None = None
-        self._unwrap = False
-        self._autofit = False
-        self._log_y = False
-        self._colorbar = None
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    _SUBPLOT_ADJ = dict(
+        hspace=0.06, wspace=0.32, left=0.08, right=0.97, top=0.93, bottom=0.08
+    )
+
+    def _style_all(self) -> None:
+        _style_ax(self.ax_r, r"|r|", bottom=False)
+        _style_ax(self.ax_R, r"R = |r|²", bottom=False)
+        _style_ax(self.ax_phi, r"φ_r (rad)", xlabel="Wavelength (nm)", bottom=True)
+        _style_ax(self.ax_t, r"|t|", bottom=False)
+        _style_ax(self.ax_T, r"T", bottom=False)
+        _style_ax(self.ax_phi_t, r"φ_t (rad)", xlabel="Wavelength (nm)", bottom=True)
+        if self._colorbar is None:
+            self.fig.subplots_adjust(**self._SUBPLOT_ADJ)
+        self._apply_yscale()
+
+    def _apply_yscale(self) -> None:
+        for ax in (self.ax_r, self.ax_R, self.ax_t, self.ax_T):
+            if self._log_y:
+                ax.set_yscale("log")
+            else:
+                ax.set_yscale("linear")
+                if not self._autofit:
+                    ax.set_ylim(0, 1.05)
+
+    def _all_axes(self):
+        return (self.ax_r, self.ax_R, self.ax_phi, self.ax_t, self.ax_T, self.ax_phi_t)
 
     # ------------------------------------------------------------------
     # Public API
@@ -126,41 +173,47 @@ class PlotPanel(tk.Frame):
         amp: np.ndarray,
         R: np.ndarray,
         phi: np.ndarray,
+        amp_t: np.ndarray | None = None,
+        T_t: np.ndarray | None = None,
+        phi_t: np.ndarray | None = None,
         label: str = "",
         color_idx: int = 0,
         clear: bool = True,
         color: str | None = None,
     ) -> None:
-        """Update the three spectra plots."""
+        """Update all spectra plots."""
         self._lam = lam
         self._amp = amp
         self._R = R
         self._phi = phi
+        self._amp_t = amp_t
+        self._T_t = T_t
+        self._phi_t = phi_t
 
         col = color if color is not None else PALETTE[color_idx % len(PALETTE)]
 
         if clear:
-            for ax in (self.ax_r, self.ax_R, self.ax_phi):
+            for ax in self._all_axes():
                 ax.cla()
-            _style_ax(self.ax_r, r"|r|", bottom=False)
-            _style_ax(self.ax_R, r"R = |r|²", bottom=False)
-            _style_ax(self.ax_phi, r"φ (rad)", xlabel="Wavelength (nm)", bottom=True)
-            self.ax_r.set_ylim(0, 1.05)
-            self.ax_R.set_ylim(0, 1.05)
-
-        if clear:
-            for ax in (self.ax_r, self.ax_R, self.ax_phi):
-                ax.cla()
-            _style_ax(self.ax_r, r"|r|", bottom=False)
-            _style_ax(self.ax_R, r"R = |r|²", bottom=False)
-            _style_ax(self.ax_phi, r"φ (rad)", xlabel="Wavelength (nm)", bottom=True)
-            self._apply_yscale()
+            self._style_all()
+            self.ax_r.set_title("Reflection", color=LABEL_COL, fontsize=9, pad=4)
+            self.ax_t.set_title("Transmission", color=LABEL_COL, fontsize=9, pad=4)
 
         phi_plot = np.unwrap(phi) if self._unwrap else phi
 
         self.ax_r.plot(lam, amp, color=col, lw=1.4, label=label if label else None)
         self.ax_R.plot(lam, R, color=col, lw=1.4)
         self.ax_phi.plot(lam, phi_plot, color=col, lw=1.4)
+
+        if amp_t is not None and T_t is not None and phi_t is not None:
+            phi_t_plot = np.unwrap(phi_t) if self._unwrap else phi_t
+            self.ax_t.plot(lam, amp_t, color=col, lw=1.4)
+            self.ax_T.plot(lam, T_t, color=col, lw=1.4)
+            self.ax_phi_t.plot(lam, phi_t_plot, color=col, lw=1.4)
+        elif clear:
+            _na_placeholder(self.ax_t, "|t| — N/A")
+            _na_placeholder(self.ax_T, "T — N/A")
+            _na_placeholder(self.ax_phi_t, "φ_t — N/A")
 
         if label:
             self.ax_r.legend(
@@ -169,31 +222,66 @@ class PlotPanel(tk.Frame):
 
         self.canvas.draw_idle()
 
-    def _apply_yscale(self) -> None:
-        """Apply log/linear scale and y-limits to |r| and R axes."""
-        if self._log_y:
-            self.ax_r.set_yscale("log")
-            self.ax_R.set_yscale("log")
+    def plot_na_result(
+        self,
+        lam: np.ndarray,
+        R_eff: np.ndarray,
+        T_eff: np.ndarray | None = None,
+        label: str = "",
+        color_idx: int = 0,
+        clear: bool = True,
+    ) -> None:
+        """Plot NA-integrated reflectance and transmittance."""
+        col = PALETTE[color_idx % len(PALETTE)]
+
+        if clear:
+            for ax in self._all_axes():
+                ax.cla()
+            self._style_all()
+            self.ax_r.set_title("Reflection", color=LABEL_COL, fontsize=9, pad=4)
+            self.ax_t.set_title("Transmission", color=LABEL_COL, fontsize=9, pad=4)
+            _na_placeholder(self.ax_r, "|r| — N/A (NA-integrated)")
+            _na_placeholder(self.ax_phi, "φ_r — N/A (NA-integrated)")
+            _na_placeholder(self.ax_t, "|t| — N/A (NA-integrated)")
+            _na_placeholder(self.ax_phi_t, "φ_t — N/A (NA-integrated)")
+
+        self.ax_R.plot(lam, R_eff, color=col, lw=1.4, label=label if label else None)
+        if not self._log_y and not self._autofit:
+            self.ax_R.set_ylim(0, 1.05)
+
+        if T_eff is not None:
+            self.ax_T.plot(lam, T_eff, color=col, lw=1.4)
+            if not self._log_y and not self._autofit:
+                self.ax_T.set_ylim(0, 1.05)
         else:
-            self.ax_r.set_yscale("linear")
-            self.ax_R.set_yscale("linear")
-            if not self._autofit:
-                self.ax_r.set_ylim(0, 1.05)
-                self.ax_R.set_ylim(0, 1.05)
+            if clear:
+                _na_placeholder(self.ax_T, "T — N/A")
+
+        if label:
+            self.ax_R.legend(
+                fontsize=7, facecolor=AX_BG, labelcolor=LABEL_COL, edgecolor=SPINE_COL
+            )
+
+        # Store for hover
+        self._lam = lam
+        self._R = R_eff
+        self._amp = np.sqrt(np.clip(R_eff, 0, None))
+        self._phi = np.zeros_like(R_eff)
+        self._T_t = T_eff
+        self._amp_t = np.sqrt(np.clip(T_eff, 0, None)) if T_eff is not None else None
+        self._phi_t = np.zeros_like(T_eff) if T_eff is not None else None
+
+        self.canvas.draw_idle()
 
     def clear(self) -> None:
         if self._colorbar is not None:
             self._colorbar.remove()
             self._colorbar = None
-            self.fig.subplots_adjust(
-                hspace=0.06, left=0.12, right=0.97, top=0.96, bottom=0.08
-            )
-        for ax in (self.ax_r, self.ax_R, self.ax_phi):
+        for ax in self._all_axes():
             ax.cla()
-        _style_ax(self.ax_r, r"|r|", bottom=False)
-        _style_ax(self.ax_R, r"R = |r|²", bottom=False)
-        _style_ax(self.ax_phi, r"φ (rad)", xlabel="Wavelength (nm)", bottom=True)
-        self._apply_yscale()
+        self._style_all()
+        self.ax_r.set_title("Reflection", color=LABEL_COL, fontsize=9, pad=4)
+        self.ax_t.set_title("Transmission", color=LABEL_COL, fontsize=9, pad=4)
         self.canvas.draw_idle()
         self._lam = None
 
@@ -209,7 +297,7 @@ class PlotPanel(tk.Frame):
     def add_colorbar(
         self, cmap_name: str, vmin: float, vmax: float, label: str = ""
     ) -> None:
-        """Add a vertical colorbar to the right of all three subplots."""
+        """Add a vertical colorbar to the right of all six subplots."""
         import matplotlib
         from matplotlib.colors import Normalize
 
@@ -222,10 +310,10 @@ class PlotPanel(tk.Frame):
         sm.set_array([])
         self._colorbar = self.fig.colorbar(
             sm,
-            ax=[self.ax_r, self.ax_R, self.ax_phi],
+            ax=list(self._all_axes()),
             label=label,
             pad=0.02,
-            fraction=0.04,
+            fraction=0.02,
             aspect=30,
         )
         self._colorbar.ax.yaxis.label.set_color(LABEL_COL)
@@ -238,71 +326,38 @@ class PlotPanel(tk.Frame):
     # Hover
     # ------------------------------------------------------------------
 
-    def plot_na_result(
-        self,
-        lam: np.ndarray,
-        R_eff: np.ndarray,
-        label: str = "",
-        color_idx: int = 0,
-        clear: bool = True,
-    ) -> None:
-        """Plot NA-integrated effective reflectance. Only the R panel is populated."""
-        col = PALETTE[color_idx % len(PALETTE)]
-
-        if clear:
-            for ax in (self.ax_r, self.ax_R, self.ax_phi):
-                ax.cla()
-            _style_ax(self.ax_r, r"|r|", bottom=False)
-            _style_ax(self.ax_R, r"R = |r|²", bottom=False)
-            _style_ax(self.ax_phi, r"φ (rad)", xlabel="Wavelength (nm)", bottom=True)
-            self._apply_yscale()
-            for ax, msg in ((self.ax_r, "|r| — N/A (NA-integrated)"),
-                            (self.ax_phi, "φ — N/A (NA-integrated)")):
-                ax.text(0.5, 0.5, msg, transform=ax.transAxes,
-                        ha="center", va="center", color=TICK_COL,
-                        fontsize=8, style="italic")
-
-        self.ax_R.plot(lam, R_eff, color=col, lw=1.4, label=label if label else None)
-        if not self._log_y and not self._autofit:
-            self.ax_R.set_ylim(0, 1.05)
-
-        if label:
-            self.ax_R.legend(
-                fontsize=7, facecolor=AX_BG, labelcolor=LABEL_COL, edgecolor=SPINE_COL
-            )
-
-        # Store for hover (|r| approx = sqrt(R_eff), phase undefined)
-        self._lam = lam
-        self._R = R_eff
-        self._amp = np.sqrt(np.clip(R_eff, 0, None))
-        self._phi = np.zeros_like(R_eff)
-
-        self.canvas.draw_idle()
-
     def _on_hover(self, event) -> None:
         if self._lam is None or event.inaxes is None:
             return
         if event.xdata is None:
             return
-        # find nearest wavelength index
         idx = int(np.argmin(np.abs(self._lam - event.xdata)))
         lam_v = self._lam[idx]
-        amp_v = self._amp[idx]
-        R_v = self._R[idx]
-        phi_v = self._phi[idx]
-        self._status_var.set(
-            f"λ = {lam_v:.1f} nm   |r| = {amp_v:.4f}   "
-            f"R = {R_v:.4f}   φ = {phi_v:.4f} rad"
+        amp_v = self._amp[idx] if self._amp is not None else float("nan")
+        R_v = self._R[idx] if self._R is not None else float("nan")
+        phi_v = self._phi[idx] if self._phi is not None else float("nan")
+
+        msg = (
+            f"λ = {lam_v:.1f} nm   "
+            f"|r| = {amp_v:.4f}   R = {R_v:.4f}   φ_r = {phi_v:.4f} rad"
         )
 
-        # Draw vertical crosshair on all axes
+        if self._amp_t is not None:
+            amp_t_v = self._amp_t[idx]
+            T_v = self._T_t[idx] if self._T_t is not None else float("nan")
+            phi_t_v = self._phi_t[idx] if self._phi_t is not None else float("nan")
+            msg += f"   |t| = {amp_t_v:.4f}   T = {T_v:.4f}   φ_t = {phi_t_v:.4f} rad"
+
+        self._status_var.set(msg)
+
+        # Vertical crosshair on all axes
         for vl in self._vlines:
             try:
                 vl.remove()
             except Exception:
                 pass
         self._vlines = []
-        for ax in (self.ax_r, self.ax_R, self.ax_phi):
+        for ax in self._all_axes():
             vl = ax.axvline(lam_v, color="#ffffff", lw=0.6, alpha=0.4, linestyle=":")
             self._vlines.append(vl)
         self.canvas.draw_idle()

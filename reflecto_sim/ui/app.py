@@ -14,7 +14,7 @@ import numpy as np
 
 from ..materials import MaterialLibrary, MaterialRangeError
 from ..stack import StackConfig, resolve_stack, build_N_matrix
-from ..tmm import compute_spectrum, compute_na_spectrum, r_to_observables, warm_up_jit
+from ..tmm import compute_spectrum, compute_na_spectrum, r_to_observables, t_to_observables, warm_up_jit
 from .plot_panel import PlotPanel, BG_DARK, LABEL_COL, TICK_COL, SPINE_COL, AX_BG
 
 _BTN_BG = "#1e1e3a"
@@ -69,8 +69,12 @@ class ReflectoApp(tk.Tk):
         self._debounce_id: str | None = None
         self._computing = False
         self._last_r: np.ndarray | None = None
+        self._last_t: np.ndarray | None = None
         self._last_lam: np.ndarray | None = None
+        self._last_N0_arr: np.ndarray | None = None
+        self._last_Ns_arr: np.ndarray | None = None
         self._last_R_eff: np.ndarray | None = None
+        self._last_T_eff: np.ndarray | None = None
         self._last_mode: str = "spectrum"  # "spectrum" | "na" | "sweep"
 
         self._build_ui()
@@ -130,17 +134,17 @@ class ReflectoApp(tk.Tk):
         )
         self.stack_editor.pack(fill=tk.BOTH, expand=True)
 
-        # Centre: plot panel
+        # Right column: controls (packed before centre so expand=True works correctly)
+        right = tk.Frame(main, bg=BG_DARK, width=200)
+        right.pack(side=tk.RIGHT, fill=tk.Y, padx=(0, 6))
+        right.pack_propagate(False)
+
+        # Centre: plot panel (packed last so it fills remaining space)
         centre = tk.Frame(main, bg=BG_DARK)
         centre.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=6)
 
         self.plot_panel = PlotPanel(centre)
         self.plot_panel.pack(fill=tk.BOTH, expand=True)
-
-        # Right column: controls
-        right = tk.Frame(main, bg=BG_DARK, width=200)
-        right.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 6))
-        right.pack_propagate(False)
 
         self._build_controls(right)
 
@@ -424,7 +428,7 @@ class ReflectoApp(tk.Tk):
                 layers, N0_arr, Ns_arr = resolve_stack(config, lam_array, self.lib)
                 N_mat, d_arr = build_N_matrix(layers)
                 if use_na:
-                    R_eff = compute_na_spectrum(
+                    R_eff, T_eff = compute_na_spectrum(
                         N_mat,
                         d_arr,
                         lam_array,
@@ -438,11 +442,11 @@ class ReflectoApp(tk.Tk):
                     self.after(
                         0,
                         lambda: self._update_na_plot(
-                            lam_array, R_eff, na_val, theta_max_deg
+                            lam_array, R_eff, T_eff, na_val, theta_max_deg
                         ),
                     )
                 else:
-                    r = compute_spectrum(
+                    r, t = compute_spectrum(
                         N_mat,
                         d_arr,
                         lam_array,
@@ -452,9 +456,13 @@ class ReflectoApp(tk.Tk):
                         pol=pol,
                     )
                     amp, R, phi = r_to_observables(r)
+                    amp_t, T_t, phi_t = t_to_observables(t, N0_arr, Ns_arr, theta, pol)
                     self._last_r = r
+                    self._last_t = t
                     self._last_lam = lam_array
-                    self.after(0, lambda: self._update_plot(lam_array, amp, R, phi))
+                    self._last_N0_arr = N0_arr
+                    self._last_Ns_arr = Ns_arr
+                    self.after(0, lambda: self._update_plot(lam_array, amp, R, phi, amp_t, T_t, phi_t))
             except MaterialRangeError as e:
                 self.after(0, lambda: self._status(f"Range error: {e}"))
             except Exception as e:
@@ -464,18 +472,20 @@ class ReflectoApp(tk.Tk):
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _update_plot(self, lam, amp, R, phi):
+    def _update_plot(self, lam, amp, R, phi, amp_t=None, T_t=None, phi_t=None):
         config = self.stack_editor.get_config()
         label = " / ".join(l.name for l in config.layers)
         self.plot_panel.set_unwrap(self._unwrap.get())
-        self.plot_panel.plot(lam, amp, R, phi, label=label, clear=True)
-        r_single = amp[len(amp) // 2]
-        R_single = R[len(R) // 2]
-        lam_mid = lam[len(lam) // 2]
-        self._status(
+        self.plot_panel.plot(lam, amp, R, phi, amp_t, T_t, phi_t, label=label, clear=True)
+        mid = len(lam) // 2
+        lam_mid = lam[mid]
+        status = (
             f"Done — {len(lam)} pts\n"
-            f"@{lam_mid:.0f}nm: |r|={r_single:.3f} R={R_single:.3f}"
+            f"@{lam_mid:.0f}nm: |r|={amp[mid]:.3f} R={R[mid]:.3f}"
         )
+        if T_t is not None:
+            status += f" T={T_t[mid]:.3f}"
+        self._status(status)
 
     def _on_unwrap_toggle(self):
         self._replot_last()
@@ -491,13 +501,18 @@ class ReflectoApp(tk.Tk):
     def _replot_last(self):
         """Re-draw the last single spectrum with current display settings."""
         if self._last_r is not None:
-            from ..tmm import r_to_observables
-
             amp, R, phi = r_to_observables(self._last_r)
+            amp_t, T_t, phi_t = None, None, None
+            if self._last_t is not None:
+                pol = self._pol.get()
+                amp_t, T_t, phi_t = t_to_observables(
+                    self._last_t, self._last_N0_arr, self._last_Ns_arr,
+                    float(self._angle.get()), pol
+                )
             config = self.stack_editor.get_config()
             label = " / ".join(l.name for l in config.layers)
             self.plot_panel.set_unwrap(self._unwrap.get())
-            self.plot_panel.plot(self._last_lam, amp, R, phi, label=label, clear=True)
+            self.plot_panel.plot(self._last_lam, amp, R, phi, amp_t, T_t, phi_t, label=label, clear=True)
 
     def _on_na_toggle(self):
         if self._use_na.get():
@@ -510,13 +525,15 @@ class ReflectoApp(tk.Tk):
                 self._pol.set("s")
         self._schedule_recompute()
 
-    def _update_na_plot(self, lam, R_eff, na_val, theta_max_deg):
+    def _update_na_plot(self, lam, R_eff, T_eff, na_val, theta_max_deg):
         self._last_R_eff = R_eff
+        self._last_T_eff = T_eff
         self._last_lam = lam
         self._last_mode = "na"
         self._last_r = None
+        self._last_t = None
         label = f"NA={na_val:.2f}"
-        self.plot_panel.plot_na_result(lam, R_eff, label=label)
+        self.plot_panel.plot_na_result(lam, R_eff, T_eff, label=label)
         self._status(
             f"Done — NA={na_val:.2f}  θmax={theta_max_deg:.1f}°\n" f"{len(lam)} pts"
         )
@@ -533,11 +550,22 @@ class ReflectoApp(tk.Tk):
             self._status("Invalid parameter values.")
             return
 
+        use_na = self._use_na.get()
+        na_val = 0.0
+        if use_na:
+            try:
+                na_val = float(self._na.get())
+            except ValueError:
+                use_na = False
+            if na_val <= 0.0:
+                use_na = False
+
         lam_array = np.arange(lam_min, lam_max + lam_step * 0.5, lam_step)
         base_config = self.stack_editor.get_config()
         layer_idx = params["layer_index"]
         materials = params["materials"]
-        pol = self._pol.get() if self._pol.get() != "both" else "s"
+        pol = self._pol.get()
+        pol_single = pol if pol != "both" else "s"
 
         self._computing = True
         self._status(f"Sweep: 0/{len(materials)}…")
@@ -551,17 +579,20 @@ class ReflectoApp(tk.Tk):
                     cfg.layers[layer_idx].material = mat
                     layers, N0_arr, Ns_arr = resolve_stack(cfg, lam_array, self.lib)
                     N_mat, d_arr = build_N_matrix(layers)
-                    r = compute_spectrum(
-                        N_mat,
-                        d_arr,
-                        lam_array,
-                        N0_arr,
-                        Ns_arr,
-                        theta_deg=theta,
-                        pol=pol,
-                    )
-                    amp, R, phi = r_to_observables(r)
-                    results.append((mat, lam_array, amp, R, phi))
+                    if use_na:
+                        R_eff, T_eff = compute_na_spectrum(
+                            N_mat, d_arr, lam_array, N0_arr, Ns_arr,
+                            na=na_val, pol=pol,
+                        )
+                        results.append((mat, lam_array, None, R_eff, None, None, T_eff, None, True))
+                    else:
+                        r, t = compute_spectrum(
+                            N_mat, d_arr, lam_array, N0_arr, Ns_arr,
+                            theta_deg=theta, pol=pol_single,
+                        )
+                        amp, R, phi = r_to_observables(r)
+                        amp_t, T_t, phi_t = t_to_observables(t, N0_arr, Ns_arr, theta, pol_single)
+                        results.append((mat, lam_array, amp, R, phi, amp_t, T_t, phi_t, False))
                 except MaterialRangeError:
                     errors.append(mat)
                 except Exception:
@@ -576,10 +607,15 @@ class ReflectoApp(tk.Tk):
             self._status("Sweep: no valid materials.")
             return
         self.plot_panel.clear()
-        for i, (mat, lam, amp, R, phi) in enumerate(results):
-            self.plot_panel.plot(lam, amp, R, phi, label=mat, color_idx=i, clear=False)
-        # Store first curve for hover / export
+        is_na = results[0][8]
+        for i, entry in enumerate(results):
+            mat, lam, amp, R, phi, amp_t, T_t, phi_t, _ = entry
+            if is_na:
+                self.plot_panel.plot_na_result(lam, R, T_t, label=mat, color_idx=i, clear=False)
+            else:
+                self.plot_panel.plot(lam, amp, R, phi, amp_t, T_t, phi_t, label=mat, color_idx=i, clear=False)
         self._last_r = None
+        self._last_t = None
         self._last_lam = results[0][1]
         self._last_mode = "sweep"
         msg = f"Sweep: {len(results)} materials"
@@ -599,6 +635,16 @@ class ReflectoApp(tk.Tk):
             self._status("Invalid parameter values.")
             return
 
+        use_na = self._use_na.get()
+        na_val = 0.0
+        if use_na:
+            try:
+                na_val = float(self._na.get())
+            except ValueError:
+                use_na = False
+            if na_val <= 0.0:
+                use_na = False
+
         lam_array = np.arange(lam_min, lam_max + lam_step * 0.5, lam_step)
         base_config = self.stack_editor.get_config()
         layer_idx = params["layer_index"]
@@ -606,7 +652,8 @@ class ReflectoApp(tk.Tk):
         mat_b = params["mat_b"]
         model = params["model"]
         f_values = params["f_values"]
-        pol = self._pol.get() if self._pol.get() != "both" else "s"
+        pol = self._pol.get()
+        pol_single = pol if pol != "both" else "s"
 
         self._computing = True
         self._status(f"Mix sweep: 0/{len(f_values)}…")
@@ -624,17 +671,20 @@ class ReflectoApp(tk.Tk):
                     layer.mix_model = model
                     layers, N0_arr, Ns_arr = resolve_stack(cfg, lam_array, self.lib)
                     N_mat, d_arr = build_N_matrix(layers)
-                    r = compute_spectrum(
-                        N_mat,
-                        d_arr,
-                        lam_array,
-                        N0_arr,
-                        Ns_arr,
-                        theta_deg=theta,
-                        pol=pol,
-                    )
-                    amp, R, phi = r_to_observables(r)
-                    results.append((float(f), lam_array, amp, R, phi))
+                    if use_na:
+                        R_eff, T_eff = compute_na_spectrum(
+                            N_mat, d_arr, lam_array, N0_arr, Ns_arr,
+                            na=na_val, pol=pol,
+                        )
+                        results.append((float(f), lam_array, None, R_eff, None, None, T_eff, None, True))
+                    else:
+                        r, t = compute_spectrum(
+                            N_mat, d_arr, lam_array, N0_arr, Ns_arr,
+                            theta_deg=theta, pol=pol_single,
+                        )
+                        amp, R, phi = r_to_observables(r)
+                        amp_t, T_t, phi_t = t_to_observables(t, N0_arr, Ns_arr, theta, pol_single)
+                        results.append((float(f), lam_array, amp, R, phi, amp_t, T_t, phi_t, False))
                 except MaterialRangeError:
                     errors.append(f)
                 except Exception:
@@ -656,14 +706,24 @@ class ReflectoApp(tk.Tk):
             return
         cmap = matplotlib.colormaps.get_cmap("plasma")
         self.plot_panel.clear()
-        for f, lam, amp, R, phi in results:
+        is_na = results[0][8]
+        for entry in results:
+            f, lam, amp, R, phi, amp_t, T_t, phi_t, _ = entry
             rgba = cmap(f)
             col = "#{:02x}{:02x}{:02x}".format(
                 int(rgba[0] * 255), int(rgba[1] * 255), int(rgba[2] * 255)
             )
-            self.plot_panel.plot(lam, amp, R, phi, color=col, clear=False)
+            if is_na:
+                self.plot_panel.plot_na_result(lam, R, T_t, color_idx=0, clear=False)
+                # override color manually after plotting
+                self.plot_panel.ax_R.lines[-1].set_color(col)
+                if T_t is not None and self.plot_panel.ax_T.lines:
+                    self.plot_panel.ax_T.lines[-1].set_color(col)
+            else:
+                self.plot_panel.plot(lam, amp, R, phi, amp_t, T_t, phi_t, color=col, clear=False)
         self.plot_panel.add_colorbar("plasma", 0.0, 1.0, f"f  ({mat_a} → {mat_b})")
         self._last_r = None
+        self._last_t = None
         self._last_lam = results[0][1]
         self._last_mode = "sweep"
         msg = f"Mix sweep: {len(results)} pts  {mat_a} → {mat_b}"
@@ -714,14 +774,30 @@ class ReflectoApp(tk.Tk):
         with open(path, "w", newline="") as f:
             w = csv.writer(f)
             if self._last_mode == "na" and self._last_R_eff is not None:
-                w.writerow(["lambda_nm", "R_eff"])
-                for row in zip(self._last_lam, self._last_R_eff):
-                    w.writerow([f"{v:.6g}" for v in row])
+                has_T = self._last_T_eff is not None
+                if has_T:
+                    w.writerow(["lambda_nm", "R_eff", "T_eff"])
+                    for row in zip(self._last_lam, self._last_R_eff, self._last_T_eff):
+                        w.writerow([f"{v:.6g}" for v in row])
+                else:
+                    w.writerow(["lambda_nm", "R_eff"])
+                    for row in zip(self._last_lam, self._last_R_eff):
+                        w.writerow([f"{v:.6g}" for v in row])
             else:
                 amp, R, phi = r_to_observables(self._last_r)
-                w.writerow(["lambda_nm", "|r|", "R", "phi_rad"])
-                for row in zip(self._last_lam, amp, R, phi):
-                    w.writerow([f"{v:.6g}" for v in row])
+                pol = self._pol.get()
+                amp_t, T_t, phi_t = t_to_observables(
+                    self._last_t, self._last_N0_arr, self._last_Ns_arr,
+                    float(self._angle.get()), pol
+                ) if self._last_t is not None else (None, None, None)
+                if amp_t is not None:
+                    w.writerow(["lambda_nm", "|r|", "R", "phi_r_rad", "|t|", "T", "phi_t_rad"])
+                    for row in zip(self._last_lam, amp, R, phi, amp_t, T_t, phi_t):
+                        w.writerow([f"{v:.6g}" for v in row])
+                else:
+                    w.writerow(["lambda_nm", "|r|", "R", "phi_rad"])
+                    for row in zip(self._last_lam, amp, R, phi):
+                        w.writerow([f"{v:.6g}" for v in row])
         self._status(f"CSV saved: {Path(path).name}")
 
     def _export_png(self):
